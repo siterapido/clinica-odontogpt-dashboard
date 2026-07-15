@@ -10,7 +10,7 @@ const NAV_ITEMS = [
 
 export default function Sidebar({ onLogout }) {
   return (
-    <aside className="flex w-64 flex-shrink-0 flex-col bg-gradient-to-b from-primary-light to-primary-dark px-5 py-6">
+    <aside className="flex w-64 flex-shrink-0 flex-col bg-gradient-to-b from-primary-900 to-primary-950 px-5 py-6">
       <div className="mb-8 px-2">
         <img src="/logo-odontogpt-branca.png" alt="OdontoGPT" className="h-auto w-full max-w-[170px]" />
       </div>
@@ -24,7 +24,7 @@ export default function Sidebar({ onLogout }) {
             className={({ isActive }) =>
               `group flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-medium transition-all duration-200 ${
                 isActive
-                  ? "border-l-2 border-accent-light bg-white/10 text-white"
+                  ? "border-l-2 border-sage-300 bg-white/10 text-white"
                   : "border-l-2 border-transparent text-white/65 hover:bg-white/5 hover:text-white"
               }`
             }

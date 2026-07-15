@@ -2,10 +2,10 @@ import { motion } from "framer-motion"
 import { Card } from "@/components/ui/card"
 
 const TONES = {
-  primary: "bg-primary/10 text-primary",
-  accent: "bg-accent-light/40 text-accent",
-  success: "bg-emerald-50 text-emerald-600",
-  warning: "bg-amber-50 text-amber-600",
+  primary: "bg-primary-50 text-primary-700",
+  accent: "bg-primary-100 text-primary-600",
+  success: "bg-emerald-50 text-emerald-700",
+  warning: "bg-amber-50 text-amber-700",
 }
 
 export default function MetricCard({ icon: Icon, value, label, tone = "primary", index = 0 }) {

@@ -8,11 +8,11 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default:
-          "bg-gradient-to-b from-primary-light to-primary text-white shadow-card hover:shadow-card-lg hover:-translate-y-0.5",
+          "bg-gradient-to-b from-primary-500 to-primary-700 text-white shadow-card hover:shadow-card-lg hover:-translate-y-0.5",
         outline:
-          "border border-border bg-white text-ink hover:bg-surface hover:border-accent-light",
-        ghost: "text-ink-secondary hover:bg-surface hover:text-ink",
-        danger: "text-danger hover:bg-danger/10",
+          "border border-border bg-surface-2 text-ink hover:bg-surface-1 hover:border-primary-300",
+        ghost: "text-ink-secondary hover:bg-surface-1 hover:text-ink",
+        danger: "text-danger hover:bg-red-50",
       },
       size: {
         default: "h-10 px-4",

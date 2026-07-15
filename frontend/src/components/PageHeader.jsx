@@ -8,8 +8,8 @@ export default function PageHeader({ title, subtitle }) {
       transition={{ duration: 0.35, ease: "easeOut" }}
       className="mb-8"
     >
-      <h1 className="text-2xl font-bold tracking-tight text-ink">{title}</h1>
-      {subtitle && <p className="mt-1 text-sm text-ink-secondary">{subtitle}</p>}
+      <h1 className="font-display text-3xl font-semibold tracking-tight text-ink">{title}</h1>
+      {subtitle && <p className="mt-2 text-sm text-ink-secondary">{subtitle}</p>}
     </motion.div>
   )
 }
