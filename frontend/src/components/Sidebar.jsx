@@ -57,7 +57,6 @@ export default function Sidebar({ onLogout }) {
           />
           <span className="text-xs font-medium text-ink">WhatsApp sincronizado</span>
         </div>
-        <p className="mt-1.5 text-[10px] text-ink-tertiary">Última sync há 2 min</p>
       </div>
 
       <button
