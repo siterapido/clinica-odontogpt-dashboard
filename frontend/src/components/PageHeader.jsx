@@ -1,50 +1,24 @@
 import { motion } from "framer-motion"
 
-export default function PageHeader({ clinicName, userName, title, subtitle }) {
-  const displayClinic = clinicName || "Sua clínica"
-  const displayUser = userName || null
-  const initials = displayUser
-    ? displayUser.split(" ").map((n) => n[0]).slice(0, 2).join("")
-    : "?"
-
+export default function PageHeader({ title, subtitle, action }) {
   return (
     <motion.header
-      initial={{ opacity: 0, y: -8 }}
+      initial={{ opacity: 0, y: -6 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.35, ease: "easeOut" }}
-      className="mb-8 border-b border-border-subtle pb-6"
+      transition={{ duration: 0.3, ease: "easeOut" }}
+      className="mb-6 border-b border-border-subtle pb-5 md:mb-8"
     >
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="h-1.5 w-1.5 rounded-full bg-accent" aria-hidden />
-          <p className="text-xs font-semibold uppercase tracking-wider text-ink-tertiary">
-            {displayClinic}
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          {displayUser ? (
-            <>
-              <span className="text-sm text-ink-secondary">
-                Olá, <span className="font-medium text-ink">{displayUser.split(" ")[0]}</span>
-              </span>
-              <div
-                className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-accent to-brand-deep font-display text-sm font-semibold text-white"
-                aria-label={displayUser}
-              >
-                {initials}
-              </div>
-            </>
-          ) : (
-            <span className="text-xs text-ink-tertiary">—</span>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="font-display text-2xl font-semibold tracking-tight text-ink md:text-3xl">
+            {title}
+          </h1>
+          {subtitle && (
+            <p className="mt-1 text-sm text-ink-secondary">{subtitle}</p>
           )}
         </div>
+        {action && <div className="flex-shrink-0">{action}</div>}
       </div>
-      <h1 className="mt-3 font-display text-3xl font-semibold tracking-tight text-ink">
-        {title}
-      </h1>
-      {subtitle && (
-        <p className="mt-2 text-sm text-ink-secondary">{subtitle}</p>
-      )}
     </motion.header>
   )
 }

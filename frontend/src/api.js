@@ -37,9 +37,32 @@ export async function login(password) {
   return token
 }
 
-export function getMetricas()          { return fetchJSON(`${API}/metricas`) }
-export function getPacientes(params)   { return fetchJSON(`${API}/pacientes?` + new URLSearchParams(params)) }
-export function getPaciente(id)        { return fetchJSON(`${API}/pacientes/${id}`) }
-export function getAgendamentos(params){ return fetchJSON(`${API}/agendamentos?` + new URLSearchParams(params)) }
-export function getProntuarios(params) { return fetchJSON(`${API}/prontuarios?` + new URLSearchParams(params)) }
-export function getHealth()            { return fetchJSON(`${API}/health`) }
+export async function logout() {
+  const token = getToken()
+  if (token) {
+    try {
+      await fetch(`${API}/logout`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      })
+    } catch {}
+  }
+  clearToken()
+}
+
+export function getMetricas()           { return fetchJSON(`${API}/metricas`) }
+export function getDentistas()          { return fetchJSON(`${API}/dentistas`) }
+export function getPacientes(params)    { return fetchJSON(`${API}/pacientes?` + new URLSearchParams(params)) }
+export function getPaciente(id)         { return fetchJSON(`${API}/pacientes/${id}`) }
+export function getAgendamentos(params) { return fetchJSON(`${API}/agendamentos?` + new URLSearchParams(params)) }
+export function getProntuarios(params)  { return fetchJSON(`${API}/prontuarios?` + new URLSearchParams(params)) }
+export function getInteracoes(params)   { return fetchJSON(`${API}/interacoes?` + new URLSearchParams(params)) }
+export function getLembretes(params)    { return fetchJSON(`${API}/lembretes?` + new URLSearchParams(params)) }
+export function getHealth()             { return fetchJSON(`${API}/health`) }
+
+// formata data local YYYY-MM-DD (timezone-safe p/ inputs HTML)
+export function todayISO() {
+  const d = new Date()
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset())
+  return d.toISOString().slice(0, 10)
+}

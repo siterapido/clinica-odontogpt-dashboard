@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, CalendarDays, FileText } from 'lucide-react'
+import { useParams, useNavigate, Link } from 'react-router-dom'
+import { ArrowLeft, CalendarDays, FileText, MessageSquare } from 'lucide-react'
 import { getPaciente } from '../api'
 import PageHeader from '../components/PageHeader'
 import StatusBadge from '../components/StatusBadge'
@@ -12,8 +12,8 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 function DetailItem({ label, value, wide = false }) {
   return (
     <div className={wide ? 'col-span-full' : ''}>
-      <label className="block text-xs font-semibold uppercase tracking-wide text-ink-secondary">{label}</label>
-      <span className="mt-0.5 block text-sm font-medium text-ink">{value || '—'}</span>
+      <label className="block text-[10px] font-semibold uppercase tracking-wider text-ink-tertiary">{label}</label>
+      <span className="mt-1 block text-sm font-medium text-ink">{value || '—'}</span>
     </div>
   )
 }
@@ -35,50 +35,84 @@ export default function PacienteDetalhe() {
     <div>
       <button
         onClick={() => navigate('/pacientes')}
-        className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-primary transition-colors hover:text-accent"
+        className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-ink-secondary transition-colors hover:text-accent-deep"
       >
-        <ArrowLeft size={16} /> Voltar para Pacientes
+        <ArrowLeft size={16} /> Pacientes
       </button>
 
-      <PageHeader title={paciente.nome} subtitle={`Paciente #${paciente.id}`} />
+      <PageHeader
+        title={paciente.nome}
+        subtitle={`Paciente #${paciente.id}${paciente.telefone ? ` · ${paciente.telefone}` : ''}`}
+      />
 
       <Card className="mb-6">
-        <CardHeader><CardTitle>Dados do Paciente</CardTitle></CardHeader>
+        <CardHeader><CardTitle>Dados</CardTitle></CardHeader>
         <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <DetailItem label="Telefone" value={paciente.telefone} />
           <DetailItem label="WhatsApp" value={paciente.whatsapp} />
-          <DetailItem label="Data Nascimento" value={paciente.data_nascimento} />
+          <DetailItem label="Data de nascimento" value={paciente.data_nascimento} />
           <DetailItem label="Indicação" value={paciente.indicacao} />
           {paciente.observacoes && <DetailItem label="Observações" value={paciente.observacoes} wide />}
         </CardContent>
       </Card>
 
+      {paciente.ultimas_interacoes?.length > 0 && (
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle>Últimas mensagens</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {paciente.ultimas_interacoes.map(i => (
+              <div key={i.id} className="flex items-start gap-3 rounded-lg bg-surface-1 p-3 text-sm">
+                <div className={`mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full ${
+                  i.tipo === 'envio' ? 'bg-accent-soft text-accent-deep' : 'bg-surface-2 text-ink-secondary'
+                }`}>
+                  <MessageSquare size={13} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="mb-0.5 flex items-center gap-2 text-[10px]">
+                    <StatusBadge status={i.tipo} />
+                    {i.classificacao && <span className="text-ink-tertiary">{i.classificacao}</span>}
+                    <span className="ml-auto text-ink-tertiary">
+                      {new Date(i.created_at).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                  <p className="text-ink">{i.mensagem || '—'}</p>
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
       <Card className="mb-6">
-        <CardHeader><CardTitle>Histórico de Agendamentos</CardTitle></CardHeader>
+        <CardHeader><CardTitle>Agendamentos</CardTitle></CardHeader>
         <CardContent className="p-0">
           {paciente.agendamentos?.length ? (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-accent-light/25 text-left text-xs font-semibold uppercase tracking-wide text-ink-secondary">
-                  <th className="px-6 py-3">Data</th>
-                  <th className="px-6 py-3">Horário</th>
-                  <th className="px-6 py-3">Dentista</th>
-                  <th className="px-6 py-3">Procedimento</th>
-                  <th className="px-6 py-3">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {paciente.agendamentos.map(a => (
-                  <tr key={a.id} className="border-t border-border transition-colors hover:bg-surface">
-                    <td className="px-6 py-3 text-ink-secondary">{a.data}</td>
-                    <td className="px-6 py-3 text-ink-secondary">{a.horario}</td>
-                    <td className="px-6 py-3 text-ink-secondary">{a.dentista || '—'}</td>
-                    <td className="px-6 py-3 text-ink-secondary">{a.procedimento || '—'}</td>
-                    <td className="px-6 py-3"><StatusBadge status={a.status} /></td>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-accent-light text-left text-xs font-semibold uppercase tracking-wide text-ink-secondary">
+                    <th className="px-6 py-3">Data</th>
+                    <th className="px-6 py-3">Horário</th>
+                    <th className="px-6 py-3">Dentista</th>
+                    <th className="px-6 py-3">Procedimento</th>
+                    <th className="px-6 py-3">Status</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {paciente.agendamentos.map(a => (
+                    <tr key={a.id} className="border-t border-border-subtle transition-colors hover:bg-surface-1">
+                      <td className="px-6 py-3 text-ink-secondary">{a.data}</td>
+                      <td className="px-6 py-3 text-ink-secondary">{a.horario}</td>
+                      <td className="px-6 py-3 text-ink-secondary">{a.dentista || '—'}</td>
+                      <td className="px-6 py-3 text-ink-secondary">{a.procedimento || '—'}</td>
+                      <td className="px-6 py-3"><StatusBadge status={a.status} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           ) : (
             <EmptyState icon={CalendarDays} title="Sem agendamentos" />
           )}
@@ -89,28 +123,30 @@ export default function PacienteDetalhe() {
         <CardHeader><CardTitle>Prontuários</CardTitle></CardHeader>
         <CardContent className="p-0">
           {paciente.prontuarios?.length ? (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-accent-light/25 text-left text-xs font-semibold uppercase tracking-wide text-ink-secondary">
-                  <th className="px-6 py-3">Data</th>
-                  <th className="px-6 py-3">Dentista</th>
-                  <th className="px-6 py-3">Procedimento</th>
-                  <th className="px-6 py-3">Diagnóstico</th>
-                  <th className="px-6 py-3">Próx. Retorno</th>
-                </tr>
-              </thead>
-              <tbody>
-                {paciente.prontuarios.map(p => (
-                  <tr key={p.id} className="border-t border-border transition-colors hover:bg-surface">
-                    <td className="px-6 py-3 text-ink-secondary">{p.data_atendimento}</td>
-                    <td className="px-6 py-3 text-ink-secondary">{p.dentista || '—'}</td>
-                    <td className="px-6 py-3 text-ink-secondary">{p.procedimento || '—'}</td>
-                    <td className="px-6 py-3 text-ink-secondary">{p.diagnostico || '—'}</td>
-                    <td className="px-6 py-3 text-ink-secondary">{p.proximo_retorno_dias ? `${p.proximo_retorno_dias} dias` : '—'}</td>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-accent-light text-left text-xs font-semibold uppercase tracking-wide text-ink-secondary">
+                    <th className="px-6 py-3">Data</th>
+                    <th className="px-6 py-3">Dentista</th>
+                    <th className="px-6 py-3">Procedimento</th>
+                    <th className="px-6 py-3">Diagnóstico</th>
+                    <th className="px-6 py-3">Próx. retorno</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {paciente.prontuarios.map(p => (
+                    <tr key={p.id} className="border-t border-border-subtle transition-colors hover:bg-surface-1">
+                      <td className="px-6 py-3 text-ink-secondary">{p.data_atendimento}</td>
+                      <td className="px-6 py-3 text-ink-secondary">{p.dentista || '—'}</td>
+                      <td className="px-6 py-3 text-ink-secondary">{p.procedimento || '—'}</td>
+                      <td className="px-6 py-3 text-ink-secondary">{p.diagnostico || '—'}</td>
+                      <td className="px-6 py-3 text-ink-secondary">{p.proximo_retorno_dias ? `${p.proximo_retorno_dias} dias` : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           ) : (
             <EmptyState icon={FileText} title="Sem prontuários" />
           )}
