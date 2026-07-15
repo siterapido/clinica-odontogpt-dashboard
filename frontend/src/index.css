@@ -26,8 +26,8 @@
   --color-sage-500: #4A5A45;
 
   /* Surfaces — off-white body, layered cards */
-  --color-surface: #FAFAF8;
-  --color-surface-1: #F5F4F0;
+  --color-surface: #F8F9FB;
+  --color-surface-1: #F1F3F7;
   --color-surface-2: #FFFFFF;
 
   /* Ink (text) */
@@ -36,7 +36,7 @@
   --color-ink-tertiary: #94A3B8;
 
   /* Borders */
-  --color-border-subtle: #ECEAE3;
+  --color-border-subtle: #E5E9F0;
   --color-border: #E2E8F0;
   --color-border-strong: #CBD5E1;
 

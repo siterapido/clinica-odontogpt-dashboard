@@ -55,17 +55,17 @@ export default function Dashboard() {
         </h2>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {/* Hoje */}
-          <Card className="p-6">
-            <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-primary-50 text-primary-700">
+          <Card className="bg-primary-50/50 p-6">
+            <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-primary-100 text-primary-700">
               <Clock size={24} strokeWidth={1.9} />
             </div>
-            <div className="font-display text-5xl font-semibold leading-none tracking-tight text-ink">
+            <div className="font-display text-5xl font-semibold leading-none tracking-tight text-primary-900">
               {data.agendamentos_hoje ?? 0}
             </div>
-            <div className="mt-3 text-xs font-semibold uppercase tracking-wide text-ink-tertiary">
+            <div className="mt-3 text-xs font-semibold uppercase tracking-wide text-primary-700">
               Consultas hoje
             </div>
-            <p className="mt-1 text-xs text-ink-secondary">
+            <p className="mt-1 text-xs text-primary-700/70">
               Programadas para esta data
             </p>
           </Card>
@@ -74,7 +74,7 @@ export default function Dashboard() {
           <Card className="p-6">
             <div className={`mb-5 flex h-12 w-12 items-center justify-center rounded-xl ${
               (data.agendamentos_pendentes ?? 0) > 0
-                ? 'bg-amber-50 text-amber-700'
+                ? 'bg-warning/10 text-warning'
                 : 'bg-surface-1 text-ink-tertiary'
             }`}>
               <Hourglass size={24} strokeWidth={1.9} />
@@ -116,7 +116,7 @@ export default function Dashboard() {
           {data.ultimos_agendamentos?.length ? (
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-border-subtle bg-surface-1 text-left text-xs font-semibold uppercase tracking-wide text-ink-tertiary">
+                <tr className="border-b border-border-subtle bg-surface-1 text-left text-xs font-semibold uppercase tracking-wide text-ink-secondary">
                   <th className="px-6 py-3">Paciente</th>
                   <th className="px-6 py-3">Data</th>
                   <th className="px-6 py-3">Horário</th>
