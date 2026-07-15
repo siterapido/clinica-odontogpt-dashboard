@@ -6,7 +6,11 @@ export default function EmptyState({ icon: Icon, title, description }) {
       </div>
       <div>
         <h3 className="font-display text-lg font-semibold text-ink">{title}</h3>
-        {description && <p className="mt-1.5 max-w-sm text-sm text-ink-secondary leading-relaxed">{description}</p>}
+        {description && (
+          <p className="mx-auto mt-1.5 max-w-sm text-sm leading-relaxed text-ink-secondary">
+            {description}
+          </p>
+        )}
       </div>
     </div>
   )

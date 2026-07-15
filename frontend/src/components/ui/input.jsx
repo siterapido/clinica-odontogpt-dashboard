@@ -4,7 +4,7 @@ function Input({ className, ...props }) {
   return (
     <input
       className={cn(
-        "h-10 w-full rounded-xl border border-border bg-surface-2 px-3.5 text-sm text-ink placeholder:text-ink-secondary/70 transition-all duration-200 outline-none focus:border-primary-500 focus:ring-4 focus:ring-primary-500/15",
+        "h-10 w-full rounded-xl border border-border bg-surface-2 px-3.5 text-sm text-ink placeholder:text-ink-tertiary transition-all duration-200 outline-none focus:border-primary-500 focus:ring-4 focus:ring-primary-500/15",
         className
       )}
       {...props}

@@ -13,11 +13,11 @@ function Card({ className, ...props }) {
 }
 
 function CardHeader({ className, ...props }) {
-  return <div className={cn("flex items-center justify-between border-b border-border px-6 py-5", className)} {...props} />
+  return <div className={cn("flex items-center justify-between border-b border-border-subtle px-6 py-5", className)} {...props} />
 }
 
 function CardTitle({ className, ...props }) {
-  return <h2 className={cn("text-base font-semibold text-ink", className)} {...props} />
+  return <h2 className={cn("font-display text-lg font-semibold text-ink", className)} {...props} />
 }
 
 function CardContent({ className, ...props }) {
