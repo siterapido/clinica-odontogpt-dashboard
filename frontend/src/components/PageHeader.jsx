@@ -1,7 +1,6 @@
 import { motion } from "framer-motion"
 
 export default function PageHeader({ clinicName, userName, title, subtitle }) {
-  // Fallback honesto: não fabricar identidade. Se não veio prop, mostra placeholder neutro.
   const displayClinic = clinicName || "Sua clínica"
   const displayUser = userName || null
   const initials = displayUser
@@ -16,9 +15,12 @@ export default function PageHeader({ clinicName, userName, title, subtitle }) {
       className="mb-8 border-b border-border-subtle pb-6"
     >
       <div className="flex items-center justify-between">
-        <p className="text-xs font-semibold uppercase tracking-wider text-ink-tertiary">
-          {displayClinic}
-        </p>
+        <div className="flex items-center gap-2">
+          <span className="h-1.5 w-1.5 rounded-full bg-accent" aria-hidden />
+          <p className="text-xs font-semibold uppercase tracking-wider text-ink-tertiary">
+            {displayClinic}
+          </p>
+        </div>
         <div className="flex items-center gap-3">
           {displayUser ? (
             <>
@@ -26,7 +28,7 @@ export default function PageHeader({ clinicName, userName, title, subtitle }) {
                 Olá, <span className="font-medium text-ink">{displayUser.split(" ")[0]}</span>
               </span>
               <div
-                className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-sage-300 to-sage-500 font-display text-sm font-semibold text-white"
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-sage to-brand font-display text-sm font-semibold text-white"
                 aria-label={displayUser}
               >
                 {initials}

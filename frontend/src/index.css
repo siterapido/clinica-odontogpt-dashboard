@@ -2,58 +2,49 @@
 @import "tw-animate-css";
 
 @theme {
-  /* Primary — azul-saude (accent strategy: restrained) */
-  --color-primary-50: #F0F7FF;
-  --color-primary-100: #DBEAFE;
-  --color-primary-200: #BFDBFE;
-  --color-primary-300: #93C5FD;
-  --color-primary-400: #60A5FA;
-  --color-primary-500: #3B82F6;
-  --color-primary-600: #2563EB;
-  --color-primary-700: #1D4ED8;
-  --color-primary-800: #1E40AF;
-  --color-primary-900: #1E3A5F;
-  --color-primary-950: #15294A;
+  /* === Camada 1: Brand navy (identidade) === */
   --color-brand-deep: #0E1729;
-  --color-brand-deep-soft: #1A2540;
+  --color-brand: #1A2540;
+  --color-brand-soft: #2A3756;
 
-  /* Sage — Organic anchor accent (warm earth tone) */
-  --color-sage-50: #F5F7F4;
-  --color-sage-100: #E8EDE5;
-  --color-sage-200: #C5D2BD;
-  --color-sage-300: #8B9D83;
-  --color-sage-400: #6B7F65;
-  --color-sage-500: #4A5A45;
-
-  /* Surfaces — off-white body, layered cards */
-  --color-surface: #F8F9FB;
-  --color-surface-1: #F1F3F7;
+  /* === Camada 2: Slate neutro (base da UI) === */
+  --color-surface: #F8FAFC;
+  --color-surface-1: #F1F5F9;
   --color-surface-2: #FFFFFF;
-
-  /* Ink (text) */
-  --color-ink: #1A202C;
-  --color-ink-secondary: #64748B;
+  --color-border-subtle: #E2E8F0;
+  --color-border: #CBD5E1;
+  --color-border-strong: #94A3B8;
+  --color-ink: #0F172A;
+  --color-ink-secondary: #475569;
   --color-ink-tertiary: #94A3B8;
 
-  /* Borders */
-  --color-border-subtle: #E5E9F0;
-  --color-border: #E2E8F0;
-  --color-border-strong: #CBD5E1;
+  /* === Camada 3: Accent azul-saúde (apenas ação) === */
+  --color-accent: #3B82F6;
+  --color-accent-hover: #2563EB;
+  --color-accent-soft: #EFF6FF;
+  --color-accent-muted: #DBEAFE;
 
-  /* Semantic */
-  --color-success: #10B981;
-  --color-warning: #F59E0B;
-  --color-danger: #EF4444;
+  /* === Camada 4: Sage-mini (calor só na sidebar) === */
+  --color-sage: #8B9D83;
+  --color-sage-soft: #E8EDE5;
 
-  /* Shadows — soft layered */
-  --shadow-card: 0 1px 2px rgba(26,32,44,0.04), 0 1px 3px rgba(26,32,44,0.06);
-  --shadow-card-lg: 0 4px 12px rgba(26,32,44,0.05), 0 8px 24px rgba(26,32,44,0.06);
+  /* === Status (sem beige/warm) === */
+  --color-success: #059669;
+  --color-success-soft: #D1FAE5;
+  --color-warning: #D97706;
+  --color-warning-soft: #FEF3C7;
+  --color-danger: #DC2626;
+  --color-danger-soft: #FEE2E2;
 
-  /* Radii */
+  /* === Sombras === */
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.06);
+  --shadow-card-lg: 0 4px 12px rgba(15, 23, 42, 0.05), 0 8px 24px rgba(15, 23, 42, 0.08);
+
+  /* === Radii === */
   --radius-card: 14px;
   --radius-button: 12px;
 
-  /* Fonts */
+  /* === Fontes === */
   --font-sans: "Inter", system-ui, sans-serif;
   --font-display: "Fraunces", "Inter", serif;
 }
@@ -75,10 +66,9 @@ body {
 }
 
 ::selection {
-  background: var(--color-primary-400);
+  background: var(--color-accent);
   color: #FFFFFF;
 }
-
 
 /* Respeitar prefers-reduced-motion */
 @media (prefers-reduced-motion: reduce) {
