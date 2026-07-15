@@ -6,7 +6,6 @@ import PageHeader from '../components/PageHeader'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import Loading from '../components/Loading'
-import Pagination from '../components/Pagination'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 
@@ -21,23 +20,23 @@ export default function Pacientes() {
   const fetchData = useCallback(() => {
     setError(null)
     const params = { limit: PAGE_SIZE, offset: page * PAGE_SIZE }
-    if (busca.trim()) params.busca = busca.trim()
+    if (busca) params.busca = busca
     getPacientes(params).then(setData).catch(setError)
   }, [busca, page])
 
   useEffect(() => { fetchData() }, [fetchData])
 
-  const totalPages = data ? Math.ceil(data.total / PAGE_SIZE) : 0
+  const totalPages = data ? Math.max(1, Math.ceil(data.total / PAGE_SIZE)) : 1
 
   return (
     <div>
-      <PageHeader title="Pacientes" subtitle={data ? `${data.total} paciente(s) cadastrado(s)` : 'Carregando...'} />
+      <PageHeader title="Pacientes" subtitle="Base de pacientes da clínica" />
 
-      <div className="relative mb-5 max-w-md">
-        <Search size={17} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-secondary" />
+      <div className="relative mb-5 max-w-sm">
+        <Search size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-tertiary" />
         <Input
-          type="text"
-          placeholder="Buscar por nome ou telefone..."
+          type="search"
+          placeholder="Buscar por nome, telefone..."
           value={busca}
           onChange={e => { setBusca(e.target.value); setPage(0) }}
           className="pl-10"
@@ -51,30 +50,32 @@ export default function Pacientes() {
         <Card>
           <EmptyState
             icon={Users}
-            title="Nenhum paciente encontrado"
-            description={busca ? 'Tente outro termo de busca.' : 'Os pacientes cadastrados pelo OdontoGPT aparecerão aqui.'}
+            title={busca ? "Nenhum resultado" : "Nenhum paciente cadastrado"}
+            description={busca ? "Tente outro termo de busca." : "Os pacientes cadastrados via WhatsApp aparecerão aqui."}
           />
         </Card>
       )}
 
       {data && data.data.length > 0 && (
-        <>
-          <Card className="overflow-hidden">
+        <Card className="overflow-hidden">
+          <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="bg-accent-light/25 text-left text-xs font-semibold uppercase tracking-wide text-ink-secondary">
+                <tr className="bg-accent-light text-left text-xs font-semibold uppercase tracking-wide text-ink-secondary">
                   <th className="px-6 py-3">Nome</th>
                   <th className="px-6 py-3">Telefone</th>
                   <th className="px-6 py-3">WhatsApp</th>
-                  <th className="px-6 py-3">Data Nasc.</th>
+                  <th className="px-6 py-3">Nascimento</th>
                   <th className="px-6 py-3">Indicação</th>
                 </tr>
               </thead>
               <tbody>
                 {data.data.map(p => (
-                  <tr key={p.id} className="border-t border-border transition-colors hover:bg-surface">
-                    <td className="px-6 py-3">
-                      <Link to={`/pacientes/${p.id}`} className="font-semibold text-primary hover:text-accent">{p.nome}</Link>
+                  <tr key={p.id} className="border-t border-border-subtle transition-colors hover:bg-surface-1">
+                    <td className="px-6 py-3 font-medium text-ink">
+                      <Link to={`/pacientes/${p.id}`} className="text-accent-hover hover:text-accent-deep hover:underline">
+                        {p.nome}
+                      </Link>
                     </td>
                     <td className="px-6 py-3 text-ink-secondary">{p.telefone || '—'}</td>
                     <td className="px-6 py-3 text-ink-secondary">{p.whatsapp || '—'}</td>
@@ -84,10 +85,19 @@ export default function Pacientes() {
                 ))}
               </tbody>
             </table>
-          </Card>
+          </div>
+        </Card>
+      )}
 
-          <Pagination page={page} totalPages={totalPages} onChange={setPage} />
-        </>
+      {totalPages > 1 && data && (
+        <div className="mt-4 flex items-center justify-between text-sm text-ink-secondary">
+          <span>{data.total} paciente{data.total > 1 ? 's' : ''} no total</span>
+          <div className="flex gap-1">
+            <button disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))} className="rounded-lg border border-border-subtle bg-surface-2 px-3 py-1.5 text-xs font-medium transition-colors hover:bg-surface-1 disabled:opacity-40">Anterior</button>
+            <span className="px-3 py-1.5 text-xs font-medium">Página {page + 1} de {totalPages}</span>
+            <button disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)} className="rounded-lg border border-border-subtle bg-surface-2 px-3 py-1.5 text-xs font-medium transition-colors hover:bg-surface-1 disabled:opacity-40">Próxima</button>
+          </div>
+        </div>
       )}
     </div>
   )

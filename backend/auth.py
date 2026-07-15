@@ -57,10 +57,20 @@ def validate_token(token: str) -> bool:
 
 def require_auth(authorization: str = Header(...)):
     token = ""
-    if authorization.lower().startswith("bearer "):
+    if authorization and authorization.lower().startswith("bearer "):
         token = authorization[7:]
     if not validate_token(token):
         raise HTTPException(status_code=401, detail="Não autorizado")
+
+
+def revoke_token(authorization: str = Header(...)) -> bool:
+    token = ""
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization[7:]
+    if token in _tokens:
+        del _tokens[token]
+        return True
+    return False
 
 
 def logout(token: str):
