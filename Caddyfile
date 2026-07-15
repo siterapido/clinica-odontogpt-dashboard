@@ -1,0 +1,27 @@
+clinica.odontogpt.com {
+    # Frontend estático
+    root * /root/clinica-odontogpt-dashboard/frontend/dist
+    
+    # Proxy API para o backend FastAPI (porta 8001 - 8000 está ocupada pelo Docker)
+    handle_path /api/* {
+        reverse_proxy 127.0.0.1:8001
+    }
+
+    # SPA fallback - todas as rotas não-API vão para index.html
+    handle {
+        try_files {path} /index.html
+        file_server
+    }
+
+    # Logs
+    log {
+        output file /var/log/caddy/odontogpt-access.log
+    }
+
+    # SSL automático via Let's Encrypt (HTTP-01 challenge)
+    tls {
+        issuer acme {
+            # HTTP challenge - funciona pois o domínio aponta para esta VPS
+        }
+    }
+}

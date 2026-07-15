@@ -1,0 +1,11 @@
+# OdontoGPT Dashboard
+
+## Product Context
+- **Register**: product (dashboard operacional, não marketing)
+- **Platform**: web
+- **Users**: donos/gerentes de clínica odontológica, uso diário, decisão rápida sobre pacientes/agendamentos geridos via WhatsApp pelo agente Hermes
+- **Purpose**: visão read-only confiável dos dados que o OdontoGPT já gerencia — pacientes, agendamentos, prontuários, métricas
+- **Brand personality**: acolhedor, profissional, claro — saúde e confiança, não "tech genérico"
+- **Anti-refs**: terminal escuro pesado, cores agressivas, clipart de dente, emoji como ícone, SaaS cinza genérico
+- **Accessibility**: contraste AA, status nunca só por cor (badge com texto)
+- **Tone**: acolhedor, profissional, claro

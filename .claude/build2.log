@@ -1,0 +1,10 @@
+Tudo validado, 200 em tudo.
+
+Feito:
+- Paleta azul: `--primary #1A3A5C` (sidebar), `--accent #2C6B9E` (links/botões), fundo `#FAFAF8` mantido
+- Sidebar agora azul escuro com logo real (branca) no topo, nav sem emoji já estava limpo
+- Login com logo branca dentro de bloco azul escuro (contraste), botão azul primary
+- Build ok (`npm run build`), deploy limpo no container `evolution_caddy` (assets antigos removidos, só novos hash presentes)
+- Validação: root 200, logo PNG 200 (81KB), `/api/health` 200, login retorna token, `/api/metricas` com token 200
+
+Banco vazio (0 pacientes) — dashboard mostra empty states como já esperado no REFINAMENTO.

@@ -1,0 +1,3 @@
+Tudo 200. Redesign completo, buildado, deployado, validado.
+
+Resumo: frontend já estava quase todo redesenhado (Tailwind + lucide-react + framer-motion, paleta e sidebar gradiente conforme spec). Só Login.jsx e PacienteDetalhe.jsx ainda tinham classNames CSS órfãs e um import quebrado (`StatusBadge` de `Dashboard`, emoji como ícone) — ambos corrigidos antes do build (na verdade já vieram corrigidos por processo concorrente, conferi e ficaram corretos). Build limpo (353KB JS, 34KB CSS), deploy via `docker cp` pro `evolution_caddy`, curl confirma root 200, logo 200, login retorna token, e `/api/metricas`, `/api/pacientes`, `/api/agendamentos`, `/api/prontuarios` todos 200.
