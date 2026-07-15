@@ -12,7 +12,7 @@ const ACTIONS = [
     icon: UserPlus,
     title: "Cadastrar paciente",
     subtitle: "Adicionar novo paciente",
-    tone: "bg-sage-soft text-sage",
+    tone: "bg-accent-muted text-accent-hover",
   },
   {
     icon: CalendarCheck,

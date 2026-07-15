@@ -28,7 +28,7 @@ export default function PageHeader({ clinicName, userName, title, subtitle }) {
                 Olá, <span className="font-medium text-ink">{displayUser.split(" ")[0]}</span>
               </span>
               <div
-                className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-sage to-brand font-display text-sm font-semibold text-white"
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-accent to-brand-deep font-display text-sm font-semibold text-white"
                 aria-label={displayUser}
               >
                 {initials}

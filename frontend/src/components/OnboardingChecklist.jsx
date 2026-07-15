@@ -86,7 +86,7 @@ export default function OnboardingChecklist() {
                 className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full font-display text-sm font-semibold transition-colors ${
                   isDone
                     ? "bg-success text-white"
-                    : "bg-sage-soft text-sage"
+                    : "bg-accent-muted text-accent-hover"
                 }`}
               >
                 {isDone ? <Check size={16} strokeWidth={2.5} /> : step.n}
