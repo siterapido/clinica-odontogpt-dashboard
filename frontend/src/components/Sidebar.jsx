@@ -13,9 +13,12 @@ export default function Sidebar({ onLogout }) {
   return (
     <aside className="flex w-64 flex-shrink-0 flex-col bg-brand-deep px-5 py-6 text-white">
       <div className="px-2">
-        <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/60">
-          OdontoGPT
-        </p>
+        <div className="mb-3 flex items-center gap-2.5">
+          <ToothPulse size={28} className="text-accent" />
+          <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/60">
+            OdontoGPT
+          </p>
+        </div>
         <img src="/logo-odontogpt-branca.png" alt="OdontoGPT" className="h-auto w-full max-w-[170px]" />
       </div>
 

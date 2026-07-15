@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { Lock, Loader2 } from 'lucide-react'
 import { login } from '../api'
+import ToothPulse from '../components/ToothPulse'
+import HeartbeatWave from '../components/HeartbeatWave'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 
@@ -25,15 +27,25 @@ export default function Login({ onLogin }) {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-brand-deep px-4">
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-brand-deep px-4">
+      {/* Heartbeat wave sutil ao fundo */}
+      <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 text-accent/40">
+        <HeartbeatWave className="h-32 w-full" />
+      </div>
+      <div className="pointer-events-none absolute inset-x-0 top-[20%] text-accent/20">
+        <HeartbeatWave className="h-20 w-full" />
+      </div>
+
       <motion.div
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, ease: 'easeOut' }}
-        className="w-full max-w-sm rounded-2xl border border-border bg-surface-2 p-8 shadow-card-lg"
+        className="relative w-full max-w-sm rounded-2xl border border-white/10 bg-surface-2 p-8 shadow-card-lg"
+
       >
-        <div className="mb-6 flex justify-center rounded-xl bg-brand-deep px-6 py-5">
-          <img src="/logo-odontogpt-branca.png" alt="OdontoGPT" className="h-auto w-full max-w-[180px]" />
+        <div className="mb-6 flex flex-col items-center gap-3 rounded-xl bg-brand-deep px-6 py-5">
+          <ToothPulse size={36} className="text-accent" />
+          <img src="/logo-odontogpt-branca.png" alt="OdontoGPT" className="h-auto w-full max-w-[170px]" />
         </div>
 
         <h1 className="text-center text-lg font-bold text-ink">Acesso da Clínica</h1>

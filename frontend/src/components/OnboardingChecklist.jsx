@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react"
 import { motion } from "framer-motion"
 import { Check } from "lucide-react"
+import ToothPulse from "./ToothPulse"
 
 const STORAGE_KEY = "odontogpt.onboarding"
 
@@ -53,8 +54,8 @@ export default function OnboardingChecklist() {
       transition={{ duration: 0.4, ease: "easeOut" }}
       className="rounded-2xl border border-border-subtle bg-surface-2 p-8 shadow-card"
     >
-      <div className="flex items-center gap-2">
-        <span className="h-1.5 w-1.5 rounded-full bg-accent" aria-hidden />
+      <div className="flex items-center gap-2.5">
+        <ToothPulse size={28} className="text-accent" />
         <p className="text-xs font-semibold uppercase tracking-[0.2em] text-accent">
           {allDone ? "Tudo pronto" : "Bem-vindo"}
         </p>
