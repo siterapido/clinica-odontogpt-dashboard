@@ -16,8 +16,9 @@ async function fetchJSON(url) {
     throw new Error('Sessão expirada')
   }
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }))
-    throw new Error(err.detail || `Erro ${res.status}`)
+    const body = await res.json().catch(() => null)
+    const msg = formatApiError(body, res.status, res.statusText)
+    throw new Error(msg)
   }
   return res.json()
 }
@@ -48,6 +49,24 @@ export async function logout() {
     } catch {}
   }
   clearToken()
+}
+
+function formatApiError(body, status, statusText) {
+  if (!body) return `Erro ${status}${statusText ? ` (${statusText})` : ''}`
+  // FastAPI 422: { detail: [{type, loc, msg, input}, ...] }
+  if (Array.isArray(body.detail)) {
+    return body.detail
+      .map(e => {
+        const where = Array.isArray(e?.loc) ? e.loc.filter(x => x !== 'body').join('.') : ''
+        return where ? `${where}: ${e.msg || 'inválido'}` : (e.msg || 'inválido')
+      })
+      .join('; ') || `Erro ${status}`
+  }
+  // FastAPI 401/403/404: { detail: "string" }
+  if (typeof body.detail === 'string') return body.detail
+  // fallback genérico
+  if (body.message) return body.message
+  try { return JSON.stringify(body) } catch { return `Erro ${status}` }
 }
 
 export function getMetricas()           { return fetchJSON(`${API}/metricas`) }

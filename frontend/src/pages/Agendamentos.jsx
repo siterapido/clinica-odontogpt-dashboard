@@ -54,7 +54,7 @@ export default function Agendamentos() {
     const params = {
       de: fmtISO(weekStart),
       ate: fmtISO(weekEnd),
-      limit: 500,
+      limit: 200,
     }
     if (status) params.status = status
     if (dentista) params.dentista = dentista
