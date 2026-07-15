@@ -25,15 +25,15 @@ export default function Login({ onLogin }) {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-surface px-4">
+    <div className="flex min-h-screen items-center justify-center bg-brand-deep px-4">
       <motion.div
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, ease: 'easeOut' }}
         className="w-full max-w-sm rounded-2xl border border-border bg-surface-2 p-8 shadow-card-lg"
       >
-        <div className="mb-6 flex justify-center rounded-2xl bg-gradient-to-b from-primary-900 to-primary-950 px-6 py-5">
-          <img src="/logo-odontogpt-branca.png" alt="OdontoGPT" className="h-auto w-full max-w-[200px]" />
+        <div className="mb-6 flex justify-center rounded-xl bg-brand-deep px-6 py-5">
+          <img src="/logo-odontogpt-branca.png" alt="OdontoGPT" className="h-auto w-full max-w-[180px]" />
         </div>
 
         <h1 className="text-center text-lg font-bold text-ink">Acesso da Clínica</h1>
