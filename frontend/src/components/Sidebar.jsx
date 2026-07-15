@@ -13,7 +13,7 @@ export default function Sidebar({ onLogout }) {
   return (
     <aside className="flex w-64 flex-shrink-0 flex-col bg-brand-deep px-5 py-6 text-white">
       <div className="px-2">
-        <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-ink-tertiary">
+        <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/60">
           OdontoGPT
         </p>
         <img src="/logo-odontogpt-branca.png" alt="OdontoGPT" className="h-auto w-full max-w-[170px]" />
@@ -30,14 +30,14 @@ export default function Sidebar({ onLogout }) {
             className={({ isActive }) =>
               `group flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-medium transition-all duration-200 ${
                 isActive
-                  ? "bg-white/10 text-white shadow-inner"
+                  ? "bg-accent/15 text-white shadow-inner"
                   : "text-white/65 hover:bg-white/5 hover:text-white"
               }`
             }
           >
             {({ isActive }) => (
               <>
-                <Icon size={18} strokeWidth={1.9} className={isActive ? "text-accent" : "text-white/55 group-hover:text-white/80"} />
+                <Icon size={18} strokeWidth={1.9} className={isActive ? "text-accent-strong" : "text-white/55 group-hover:text-white/80"} />
                 <span className="flex-1">{label}</span>
                 {isActive && (
                   <span className="h-1.5 w-1.5 rounded-full bg-accent" aria-hidden />

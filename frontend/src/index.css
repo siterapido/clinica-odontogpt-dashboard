@@ -7,7 +7,15 @@
   --color-brand: #1A2540;
   --color-brand-soft: #2A3756;
 
-  /* === Camada 2: Slate neutro (base da UI) === */
+  /* === Camada 2: Accent teal #24B5CD (destaque único) === */
+  --color-accent: #24B5CD;
+  --color-accent-hover: #1A95AB;
+  --color-accent-deep: #16788A;
+  --color-accent-soft: #ECF9FB;
+  --color-accent-muted: #D2F1F6;
+  --color-accent-strong: #A4E2ED;
+
+  /* === Camada 3: Slate neutro (base da UI) === */
   --color-surface: #F8FAFC;
   --color-surface-1: #F1F5F9;
   --color-surface-2: #FFFFFF;
@@ -18,13 +26,7 @@
   --color-ink-secondary: #475569;
   --color-ink-tertiary: #94A3B8;
 
-  /* === Camada 3: Accent azul-saúde (apenas ação) === */
-  --color-accent: #3B82F6;
-  --color-accent-hover: #2563EB;
-  --color-accent-soft: #EFF6FF;
-  --color-accent-muted: #DBEAFE;
-
-  /* === Status (sem beige/warm) === */
+  /* === Status (coerentes com accent teal) === */
   --color-success: #059669;
   --color-success-soft: #D1FAE5;
   --color-warning: #D97706;
