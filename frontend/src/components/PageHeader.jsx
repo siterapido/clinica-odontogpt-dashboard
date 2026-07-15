@@ -1,11 +1,12 @@
 import { motion } from "framer-motion"
 
-export default function PageHeader({ clinicName = "Clínica Sorria", userName = "Dra. Ana Costa", title, subtitle }) {
-  const initials = userName
-    .split(" ")
-    .map((n) => n[0])
-    .slice(0, 2)
-    .join("")
+export default function PageHeader({ clinicName, userName, title, subtitle }) {
+  // Fallback honesto: não fabricar identidade. Se não veio prop, mostra placeholder neutro.
+  const displayClinic = clinicName || "Sua clínica"
+  const displayUser = userName || null
+  const initials = displayUser
+    ? displayUser.split(" ").map((n) => n[0]).slice(0, 2).join("")
+    : "?"
 
   return (
     <motion.header
@@ -16,13 +17,24 @@ export default function PageHeader({ clinicName = "Clínica Sorria", userName = 
     >
       <div className="flex items-center justify-between">
         <p className="text-xs font-semibold uppercase tracking-wider text-ink-tertiary">
-          {clinicName}
+          {displayClinic}
         </p>
         <div className="flex items-center gap-3">
-          <span className="text-sm text-ink-secondary">Olá, <span className="font-medium text-ink">{userName.split(" ")[0]}</span></span>
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-sage-300 to-sage-500 font-display text-sm font-semibold text-white">
-            {initials}
-          </div>
+          {displayUser ? (
+            <>
+              <span className="text-sm text-ink-secondary">
+                Olá, <span className="font-medium text-ink">{displayUser.split(" ")[0]}</span>
+              </span>
+              <div
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-sage-300 to-sage-500 font-display text-sm font-semibold text-white"
+                aria-label={displayUser}
+              >
+                {initials}
+              </div>
+            </>
+          ) : (
+            <span className="text-xs text-ink-tertiary">—</span>
+          )}
         </div>
       </div>
       <h1 className="mt-3 font-display text-3xl font-semibold tracking-tight text-ink">

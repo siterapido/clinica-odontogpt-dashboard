@@ -28,8 +28,6 @@ export default function Dashboard() {
     return (
       <div>
         <PageHeader
-          clinicName="Clínica Sorria"
-          userName="Dra. Ana Costa"
           title="Dashboard"
           subtitle="Visão geral da clínica em tempo real"
         />
@@ -44,8 +42,6 @@ export default function Dashboard() {
   return (
     <div>
       <PageHeader
-        clinicName="Clínica Sorria"
-        userName="Dra. Ana Costa"
         title="Dashboard"
         subtitle="Visão geral da clínica em tempo real"
       />
@@ -75,7 +71,7 @@ export default function Dashboard() {
           </Card>
 
           {/* Pendentes */}
-          <Card className={`p-6 ${(data.agendamentos_pendentes ?? 0) > 0 ? 'border-l-4 border-l-warning' : ''}`}>
+          <Card className="p-6">
             <div className={`mb-5 flex h-12 w-12 items-center justify-center rounded-xl ${
               (data.agendamentos_pendentes ?? 0) > 0
                 ? 'bg-amber-50 text-amber-700'
