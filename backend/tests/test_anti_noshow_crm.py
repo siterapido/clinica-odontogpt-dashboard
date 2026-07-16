@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import sys
-from datetime import timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -135,3 +135,31 @@ def test_worker_helper_skip_se_agendamento_cancelado(crm_db):
     conn.commit()
     row = conn.execute("SELECT * FROM lembretes WHERE id=9").fetchone()
     assert deve_enviar_lembrete(conn, row) is False
+
+
+def test_reenvio_d1_apos_4h_sem_confirmacao(crm_db):
+    from lib.reenvio import gerar_reenvios_d1  # type: ignore
+
+    conn = sqlite3.connect(crm_db)
+    # agendamento amanhã agendado
+    amanha = (datetime.now(BRT) + timedelta(days=1)).strftime("%Y-%m-%d")
+    conn.execute(
+        """INSERT INTO agendamentos (id, paciente_id, data, horario, status, procedimento)
+           VALUES (50, 1, ?, '15:00', 'agendado', 'Avaliação')""",
+        (amanha,),
+    )
+    enviado_at = (datetime.now(BRT) - timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
+    conn.execute(
+        """INSERT INTO lembretes
+           (agendamento_id, paciente_id, tipo, data_envio, mensagem, status, enviado_at)
+           VALUES (50, 1, 'd1', ?, 'primeiro', 'enviado', ?)""",
+        (enviado_at, enviado_at),
+    )
+    conn.commit()
+    n = gerar_reenvios_d1(crm_db)
+    assert n == 1
+    cnt = conn.execute(
+        """SELECT COUNT(*) FROM lembretes
+           WHERE agendamento_id=50 AND status='pendente' AND mensagem LIKE '%confirmação%'"""
+    ).fetchone()[0]
+    assert cnt == 1
