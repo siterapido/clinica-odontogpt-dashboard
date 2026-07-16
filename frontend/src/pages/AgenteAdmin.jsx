@@ -264,20 +264,20 @@ export default function AgenteAdmin() {
     setSavingPrefs(true)
     setError(null)
     const nextOp = normalizeOperador(operadorDraft)
-    // Commit session key → triggers load/poll effects; then persist prefs
-    setOperador(nextOp)
-    localStorage.setItem(OPERADOR_KEY, nextOp)
     try {
+      // Persist first; only commit session key after successful save
       const saved = await salvarAgentPreferencias({
         operador: nextOp,
         nome_agente: prefsDraft?.nome_agente || DEFAULT_PREFS.nome_agente,
         tom: prefsDraft?.tom || DEFAULT_PREFS.tom,
         habilidades: prefsDraft?.habilidades || DEFAULT_PREFS.habilidades,
       })
+      setOperador(nextOp)
+      localStorage.setItem(OPERADOR_KEY, nextOp)
       setPrefs(saved)
       setPrefsDraft(saved)
     } catch (ex) {
-      setError(ex)
+      setError(new Error('Não salvei as preferências.'))
     } finally {
       setSavingPrefs(false)
     }

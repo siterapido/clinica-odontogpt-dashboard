@@ -22,7 +22,9 @@ DEFAULT_TOM = "acolhedor"
 DEFAULT_HABILIDADES = {k: True for k in sorted(VALID_SKILL_KEYS)}
 
 _ENTREGA_RE = re.compile(
-    r":::entrega\s+tipo=\"(?P<tipo>relatorio|apresentacao)\"\s+titulo=\"(?P<titulo>[^\"]+)\"\s*\n(?P<body>.*?)\n:::",
+    r":::entrega\s+tipo\s*=\s*[\"']?(?P<tipo>relatorio|apresentacao)[\"']?"
+    r"\s+titulo\s*=\s*[\"'](?P<titulo>[^\"']+)[\"']\s*\n"
+    r"(?P<body>.*?)\n:::",
     re.DOTALL | re.IGNORECASE,
 )
 

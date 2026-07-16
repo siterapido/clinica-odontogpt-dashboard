@@ -854,7 +854,10 @@ def agent_chat(body: AgentChatBody):
         prefs=prefs,
     )
     if not ok:
-        raise HTTPException(status_code=502, detail=answer)
+        print(f"[agent_chat] provider error session={sid}: {answer}")
+        friendly = "Não consegui responder agora. Tente de novo em instantes."
+        agent_store.append(sid, "assistant", friendly)
+        raise HTTPException(status_code=502, detail=friendly)
     display, entrega = agent_store.parse_entrega(answer)
     meta = {"entrega": entrega} if entrega else None
     msg_id = agent_store.append(sid, "assistant", display, meta=meta)

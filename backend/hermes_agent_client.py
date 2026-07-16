@@ -83,7 +83,7 @@ def build_admin_system(prefs: dict | None = None) -> str:
 
 
 def admin_session_id(operator: str) -> str:
-    op = (operator or "admin").strip()[:64]
+    op = (operator or "admin").strip()[:120]
     return f"{ADMIN_SESSION_PREFIX}{op}"
 
 
@@ -119,7 +119,7 @@ def _post_openrouter(messages: list[dict[str, Any]], model: str) -> Tuple[bool, 
         body = {
             "model": m,
             "messages": messages,
-            "max_tokens": int(os.environ.get("ODONTO_OR_MAX_TOKENS", "512")),
+            "max_tokens": int(os.environ.get("ODONTO_OR_MAX_TOKENS", "2500")),
             "temperature": 0.4,
         }
         data = json.dumps(body).encode("utf-8")
