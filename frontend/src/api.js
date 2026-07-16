@@ -76,6 +76,20 @@ function formatApiError(body, status, statusText) {
 
 export function getMetricas()           { return fetchJSON(`${API}/metricas`) }
 export function getDentistas()          { return fetchJSON(`${API}/dentistas`) }
+export function getDentistasCompleto(params = {}) {
+  const q = new URLSearchParams({ completo: 'true' })
+  if (params.incluir_inativos) q.set('incluir_inativos', 'true')
+  return fetchJSON(`${API}/dentistas?${q}`)
+}
+export function criarDentista(data) {
+  return fetchJSON(`${API}/dentistas`, { method: 'POST', body: JSON.stringify(data) })
+}
+export function atualizarDentista(id, data) {
+  return fetchJSON(`${API}/dentistas/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+}
+export function excluirDentista(id) {
+  return fetchJSON(`${API}/dentistas/${id}`, { method: 'DELETE' })
+}
 export function getPacientes(params)    { return fetchJSON(`${API}/pacientes?` + new URLSearchParams(params)) }
 export function getPaciente(id)         { return fetchJSON(`${API}/pacientes/${id}`) }
 export function getAgendamentos(params) { return fetchJSON(`${API}/agendamentos?` + new URLSearchParams(params)) }
@@ -105,6 +119,36 @@ export function enviarChatMensagem(telefone, mensagem, atendente) {
   return fetchJSON(`${API}/chat/conversas/${encodeURIComponent(telefone)}/enviar`, {
     method: 'POST',
     body: JSON.stringify({ mensagem, atendente }),
+  })
+}
+
+/** Chat de teste: operador fala como se fosse o paciente; bot responde. */
+export function simularMensagemCliente(mensagem) {
+  return fetchJSON(`${API}/chat/teste/simular`, {
+    method: 'POST',
+    body: JSON.stringify({ mensagem }),
+  })
+}
+
+export function limparChatTeste() {
+  return fetchJSON(`${API}/chat/teste/limpar`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  })
+}
+
+export function getChatTesteInfo() {
+  return fetchJSON(`${API}/chat/teste`)
+}
+
+export function getClinica() {
+  return fetchJSON(`${API}/clinica`)
+}
+
+export function salvarClinica(data) {
+  return fetchJSON(`${API}/clinica`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
   })
 }
 
@@ -140,8 +184,99 @@ export async function uploadAgentFile(file) {
   return res.json()
 }
 
+export function getAgentPreferencias(operador = 'Gerente') {
+  return fetchJSON(`${API}/agent/preferencias?` + new URLSearchParams({ operador }))
+}
+
+export function salvarAgentPreferencias(body) {
+  return fetchJSON(`${API}/agent/preferencias`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
+}
+
+export function getAgentEntregas(operador = 'Gerente', params = {}) {
+  return fetchJSON(`${API}/agent/entregas?` + new URLSearchParams({ operador, ...params }))
+}
+
 export function getLembretes(params)    { return fetchJSON(`${API}/lembretes?` + new URLSearchParams(params)) }
 export function getHealth()             { return fetchJSON(`${API}/health`) }
+export function getOperacao()           { return fetchJSON(`${API}/operacao`) }
+export function getAgendaDisponibilidade(params = {}) {
+  return fetchJSON(`${API}/agenda/disponibilidade?` + new URLSearchParams(params))
+}
+
+// ─── V2 ────────────────────────────────────────────────────────────
+export function getV2Slots(params) {
+  return fetchJSON(`${API}/v2/slots?` + new URLSearchParams(params))
+}
+export function agendamentoAcao(id, acao, motivo) {
+  return fetchJSON(`${API}/v2/agendamentos/${id}/acao`, {
+    method: 'POST', body: JSON.stringify({ acao, motivo }),
+  })
+}
+export function getListaEspera(status = 'ativo') {
+  return fetchJSON(`${API}/v2/lista-espera?status=${encodeURIComponent(status)}`)
+}
+export function addListaEspera(body) {
+  return fetchJSON(`${API}/v2/lista-espera`, { method: 'POST', body: JSON.stringify(body) })
+}
+export function patchListaEspera(id, body) {
+  return fetchJSON(`${API}/v2/lista-espera/${id}`, { method: 'PATCH', body: JSON.stringify(body) })
+}
+export function getProcedimentos(incluir_inativos = false) {
+  return fetchJSON(`${API}/v2/procedimentos?incluir_inativos=${incluir_inativos}`)
+}
+export function saveProcedimento(body) {
+  return fetchJSON(`${API}/v2/procedimentos`, { method: 'POST', body: JSON.stringify(body) })
+}
+export function getOrcamentos(params = {}) {
+  return fetchJSON(`${API}/v2/orcamentos?` + new URLSearchParams(params))
+}
+export function getOrcamento(id) {
+  return fetchJSON(`${API}/v2/orcamentos/${id}`)
+}
+export function createOrcamento(body) {
+  return fetchJSON(`${API}/v2/orcamentos`, { method: 'POST', body: JSON.stringify(body) })
+}
+export function enviarOrcamento(id) {
+  return fetchJSON(`${API}/v2/orcamentos/${id}/enviar`, { method: 'POST', body: '{}' })
+}
+export function statusOrcamento(id, status, motivo_recusa) {
+  return fetchJSON(`${API}/v2/orcamentos/${id}/status`, {
+    method: 'PATCH', body: JSON.stringify({ status, motivo_recusa }),
+  })
+}
+export function getPipeline() {
+  return fetchJSON(`${API}/v2/pipeline`)
+}
+export function getFinanceiroResumo(mes) {
+  const q = mes ? `?mes=${encodeURIComponent(mes)}` : ''
+  return fetchJSON(`${API}/v2/financeiro/resumo${q}`)
+}
+export function getCaixa(data) {
+  const q = data ? `?data=${encodeURIComponent(data)}` : ''
+  return fetchJSON(`${API}/v2/financeiro/caixa${q}`)
+}
+export function getPagamentos(params = {}) {
+  return fetchJSON(`${API}/v2/pagamentos?` + new URLSearchParams(params))
+}
+export function createPagamento(body) {
+  return fetchJSON(`${API}/v2/pagamentos`, { method: 'POST', body: JSON.stringify(body) })
+}
+export function getNps(dias = 90) {
+  return fetchJSON(`${API}/v2/nps?dias=${dias}`)
+}
+export function createNps(body) {
+  return fetchJSON(`${API}/v2/nps`, { method: 'POST', body: JSON.stringify(body) })
+}
+export function getPreconsultas(status) {
+  const q = status ? `?status=${encodeURIComponent(status)}` : ''
+  return fetchJSON(`${API}/v2/preconsultas${q}`)
+}
+export function getSecurityEvents(limit = 50) {
+  return fetchJSON(`${API}/v2/security-events?limit=${limit}`)
+}
 
 export function createPaciente(body) {
   return fetchJSON(`${API}/pacientes`, { method: 'POST', body: JSON.stringify(body) })
