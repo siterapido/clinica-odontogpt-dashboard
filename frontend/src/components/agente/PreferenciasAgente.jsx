@@ -22,7 +22,8 @@ export const SKILL_PACKS = [
 export default function PreferenciasAgente({ value, onChange, onSave, saving, operador, onOperadorChange }) {
   const v = value || {}
   const hab = v.habilidades || {}
-  const tomMeta = TONS.find(t => t.id === v.tom) || TONS[0]
+  const tomId = v.tom || TONS[0].id
+  const tomMeta = TONS.find(t => t.id === tomId) || TONS[0]
 
   function setField(patch) {
     onChange({ ...v, ...patch })
@@ -60,7 +61,7 @@ export default function PreferenciasAgente({ value, onChange, onSave, saving, op
               type="button"
               onClick={() => setField({ tom: t.id })}
               className={`w-full rounded-xl border px-3 py-2 text-left text-xs transition ${
-                v.tom === t.id
+                tomId === t.id
                   ? 'border-accent bg-accent/10 text-ink'
                   : 'border-border-subtle bg-surface-1 text-ink-secondary hover:border-accent/30'
               }`}
@@ -92,6 +93,7 @@ export default function PreferenciasAgente({ value, onChange, onSave, saving, op
               <button
                 type="button"
                 role="switch"
+                aria-label={s.label}
                 aria-checked={!!hab[s.id]}
                 onClick={() => toggleSkill(s.id)}
                 className={`relative h-6 w-10 shrink-0 rounded-full transition ${
