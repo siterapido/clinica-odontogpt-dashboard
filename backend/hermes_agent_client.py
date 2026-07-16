@@ -1,4 +1,4 @@
-"""Proxy seguro para chat administrador → Hermes API (perfil odonto-gpt)."""
+"""Proxy seguro para chat administrador → Hermes API / OpenRouter free."""
 from __future__ import annotations
 
 import json
@@ -9,7 +9,16 @@ from typing import Any, Tuple
 
 HERMES_API_URL = os.environ.get("ODONTO_HERMES_API_URL", "http://127.0.0.1:8643").rstrip("/")
 HERMES_API_KEY = os.environ.get("ODONTO_HERMES_API_KEY", "").strip()
-HERMES_MODEL = os.environ.get("ODONTO_HERMES_MODEL", "grok-3-mini").strip()
+HERMES_MODEL = os.environ.get(
+    "ODONTO_HERMES_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free"
+).strip()
+
+# OpenRouter direto — free models não suportam tool calling do Hermes agent
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
+OPENROUTER_URL = os.environ.get("OPENROUTER_API_URL", "https://openrouter.ai/api/v1").rstrip("/")
+# Prefer env ODONTO_OPENROUTER_DIRECT=1 or free-model auto
+USE_OPENROUTER_DIRECT = os.environ.get("ODONTO_OPENROUTER_DIRECT", "1").strip() not in ("0", "false", "no")
+
 ADMIN_SESSION_PREFIX = "admin-dashboard-"
 
 ADMIN_SYSTEM = (
@@ -20,8 +29,57 @@ ADMIN_SYSTEM = (
     "não substitua diagnóstico. "
     "NUNCA invente dados de pacientes. Use métricas do contexto quando fornecidas. "
     "Não revele telefone/PII de pacientes não citados pelo operador. "
-    "Sugira ações práticas (reativação, confirmação de consulta, revisão de lembretes)."
+    "Sugira ações práticas (reativação, confirmação de consulta, revisão de lembretes). "
+    "Nunca diga qual modelo, provedor ou IA você está usando."
 )
+
+TOM_INSTRUCTIONS = {
+    "acolhedor": "Tom acolhedor: caloroso, frases claras, empodera o gestor sem rodeios excessivos.",
+    "executivo": "Tom direto e executivo: priorize bullets, números e 3 ações no máximo; pouca prosa.",
+    "clinico": "Tom técnico-clínico: preciso, linguagem da área, sempre ressalte limites e avaliação presencial.",
+    "didatico": "Tom didático: explique o porquê de cada recomendação, útil para treinar a equipe.",
+    "proativo": "Tom proativo: antecipe riscos e termine com até 3 próximos passos concretos.",
+}
+
+SKILL_LABELS = {
+    "agenda": "Agenda e ocupação",
+    "financeiro": "Financeiro",
+    "reativacao": "Reativação de pacientes",
+    "imagens": "Análise de imagens e documentos",
+    "relatorios": "Relatórios executivos",
+    "apresentacoes": "Apresentações / pautas",
+    "alertas": "Alertas proativos da operação",
+}
+
+
+def build_admin_system(prefs: dict | None = None) -> str:
+    prefs = prefs or {}
+    nome = (prefs.get("nome_agente") or "OdontoGPT").strip()[:80]
+    tom = prefs.get("tom") or "acolhedor"
+    hab = prefs.get("habilidades") or {}
+    tom_line = TOM_INSTRUCTIONS.get(tom, TOM_INSTRUCTIONS["acolhedor"])
+    on = [SKILL_LABELS[k] for k, v in hab.items() if v and k in SKILL_LABELS]
+    off = [SKILL_LABELS[k] for k, v in hab.items() if not v and k in SKILL_LABELS]
+    on_s = ", ".join(on) if on else "nenhuma área extra"
+    off_s = ", ".join(off) if off else "nenhuma"
+    entrega_rule = ""
+    if hab.get("relatorios") or hab.get("apresentacoes"):
+        entrega_rule = (
+            "Quando o gestor pedir relatório formal ou apresentação/pauta, além do texto conversacional "
+            "inclua UM bloco no formato exato:\n"
+            ":::entrega tipo=\"relatorio\" titulo=\"...\"\nmarkdown\n:::\n"
+            "Use tipo=\"apresentacao\" para outlines de slides/pauta. "
+            "Não mencione o delimitador ao gestor."
+        )
+    return (
+        f"{ADMIN_SYSTEM}\n\n"
+        f"Seu nome nesta conversa com o gestor é {nome}. Apresente-se e assine mentalmente como {nome}.\n"
+        f"{tom_line}\n"
+        f"Áreas habilitadas: {on_s}.\n"
+        f"Áreas desligadas nas preferências do gestor (não proponha ações nessas áreas; se pedirem, explique "
+        f"com elegância que está desligada em 'Seu agente'): {off_s}.\n"
+        f"{entrega_rule}"
+    )
 
 
 def admin_session_id(operator: str) -> str:
@@ -29,7 +87,72 @@ def admin_session_id(operator: str) -> str:
     return f"{ADMIN_SESSION_PREFIX}{op}"
 
 
-def _post_chat(messages: list[dict[str, Any]], session_key: str) -> Tuple[bool, str]:
+def _is_free_model(model: str) -> bool:
+    m = (model or "").lower()
+    return m.endswith(":free") or m == "openrouter/free" or "/free" in m
+
+
+def _post_openrouter(messages: list[dict[str, Any]], model: str) -> Tuple[bool, str]:
+    key = OPENROUTER_API_KEY
+    if not key:
+        return False, "OPENROUTER_API_KEY não configurada no backend"
+    url = f"{OPENROUTER_URL}/chat/completions"
+    models = []
+    primary = model or HERMES_MODEL
+    models.append(primary)
+    for m in (
+        "nvidia/nemotron-3-ultra-550b-a55b:free",
+        "nvidia/nemotron-3-super-120b-a12b:free",
+        "meta-llama/llama-3.2-3b-instruct:free",
+        "openrouter/free",
+    ):
+        if m not in models:
+            models.append(m)
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {key}",
+        "HTTP-Referer": "https://clinica.odontogpt.com",
+        "X-Title": "OdontoGPT Dashboard",
+    }
+    last_err = "sem resposta"
+    for m in models:
+        body = {
+            "model": m,
+            "messages": messages,
+            "max_tokens": int(os.environ.get("ODONTO_OR_MAX_TOKENS", "512")),
+            "temperature": 0.4,
+        }
+        data = json.dumps(body).encode("utf-8")
+        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=90) as resp:
+                payload = json.loads(resp.read().decode("utf-8") or "{}")
+        except urllib.error.HTTPError as e:
+            raw = e.read().decode("utf-8", errors="replace")
+            try:
+                err = json.loads(raw)
+                msg = err.get("error", {}).get("message") if isinstance(err.get("error"), dict) else err.get("message") or raw
+            except json.JSONDecodeError:
+                msg = raw or str(e)
+            last_err = f"HTTP {e.code}: {msg}"[:500]
+            # tenta próximo free model em 429/404
+            if e.code in (429, 404, 502, 503):
+                continue
+            return False, last_err
+        except Exception as e:
+            last_err = str(e)[:500]
+            continue
+        if isinstance(payload, dict):
+            choices = payload.get("choices") or []
+            if choices:
+                content = choices[0].get("message", {}).get("content", "")
+                if content:
+                    return True, content.strip()
+        last_err = f"resposta vazia do OpenRouter ({m})"
+    return False, last_err
+
+
+def _post_hermes(messages: list[dict[str, Any]], session_key: str) -> Tuple[bool, str]:
     if not HERMES_API_KEY:
         return False, "ODONTO_HERMES_API_KEY não configurada no backend do dashboard"
     url = f"{HERMES_API_URL}/v1/chat/completions"
@@ -62,9 +185,22 @@ def _post_chat(messages: list[dict[str, Any]], session_key: str) -> Tuple[bool, 
         choices = payload.get("choices") or []
         if choices:
             content = choices[0].get("message", {}).get("content", "")
+            # Hermes sometimes returns error text as content
+            hermes_meta = payload.get("hermes") or {}
+            if hermes_meta.get("failed") or choices[0].get("finish_reason") == "error":
+                return False, (content or hermes_meta.get("error") or "falha hermes")[:500]
             if content:
                 return True, content.strip()
     return False, "resposta vazia do Hermes"
+
+
+def _post_chat(messages: list[dict[str, Any]], session_key: str) -> Tuple[bool, str]:
+    model = HERMES_MODEL
+    if USE_OPENROUTER_DIRECT and (_is_free_model(model) or OPENROUTER_API_KEY):
+        # free model → OpenRouter direto (sem tools, sem rate-limit do agent loop)
+        if OPENROUTER_API_KEY and _is_free_model(model):
+            return _post_openrouter(messages, model)
+    return _post_hermes(messages, session_key)
 
 
 def ask_admin(
@@ -73,6 +209,7 @@ def ask_admin(
     metrics_hint: str | None = None,
     history: list[dict[str, Any]] | None = None,
     content_parts: list[dict[str, Any]] | None = None,
+    prefs: dict[str, Any] | None = None,
 ) -> Tuple[bool, str]:
     text = (user_text or "").strip()
     if not text and not content_parts:
@@ -90,13 +227,79 @@ def ask_admin(
     else:
         user_content = prefix + text
 
-    messages: list[dict[str, Any]] = [{"role": "system", "content": ADMIN_SYSTEM}]
+    system = build_admin_system(prefs)
+    messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
     if history:
         for h in history[-10:]:
             messages.append({"role": h["role"], "content": h["content"]})
     messages.append({"role": "user", "content": user_content})
 
     return _post_chat(messages, session_key)
+
+
+# ─── Atendimento paciente (simulador WhatsApp no dashboard) ─────────
+
+PATIENT_SESSION_PREFIX = "paciente-sim-"
+
+PATIENT_SYSTEM = (
+    "Você é a OdontoGPT, assistente da clínica odontológica no WhatsApp. "
+    "Atenda o paciente de forma acolhedora em português do Brasil: agendamento, "
+    "confirmação, remarcação, lembretes e dúvidas gerais sobre a clínica. "
+    "Responda só em texto natural (sem JSON, sem function calls, sem tags de tool). "
+    "Não faça diagnóstico nem prescrição — oriente avaliação presencial quando couber. "
+    "Nunca diga qual modelo, provedor ou IA você está usando. "
+    "Nunca invente dados de outros pacientes. "
+    "Use os dados cadastrados da clínica (nome, endereço, horários) quando fornecidos no contexto."
+)
+
+
+def patient_session_id(telefone: str) -> str:
+    digits = "".join(ch for ch in (telefone or "") if ch.isdigit())[:20]
+    return f"{PATIENT_SESSION_PREFIX}{digits or 'anon'}"
+
+
+def ask_patient(
+    session_key: str,
+    user_text: str,
+    history: list[dict[str, Any]] | None = None,
+    telefone: str | None = None,
+) -> Tuple[bool, str]:
+    """Mesmo tom do bot WhatsApp — usado no chat de teste do dashboard."""
+    text = (user_text or "").strip()
+    if not text:
+        return False, "mensagem vazia"
+    if len(text) > 4000:
+        text = text[:4000]
+
+    phone = "".join(ch for ch in (telefone or "") if ch.isdigit())
+    ctx = ""
+    if phone:
+        ctx = (
+            f"[Sessão WhatsApp (simulador dashboard) — telefone do paciente: {phone}. "
+            f"Responda em PT-BR, texto natural.]\n\n"
+        )
+
+    clinic_ctx = ""
+    try:
+        from clinic_config import clinic_context_for_bot
+        clinic_ctx = clinic_context_for_bot()
+    except Exception:
+        clinic_ctx = ""
+    system = PATIENT_SYSTEM
+    if clinic_ctx:
+        system = PATIENT_SYSTEM + "\n\n" + clinic_ctx
+
+    messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
+    if history:
+        for h in history[-12:]:
+            role = h.get("role") or "user"
+            content = h.get("content") or ""
+            if role in ("user", "assistant") and content:
+                messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": ctx + f"Mensagem do paciente: {text}"})
+
+    return _post_chat(messages, session_key)
+
 
 STUDENT_SESSION_PREFIX = "estudante-dashboard-"
 VISION_SESSION_PREFIX = "vision-dashboard-"
@@ -174,4 +377,3 @@ def ask_vision(
             messages.append({"role": h["role"], "content": h["content"]})
     messages.append({"role": "user", "content": user_content})
     return _post_chat(messages, session_key)
-
