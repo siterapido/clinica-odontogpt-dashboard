@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
@@ -19,6 +20,11 @@ VALID_SKILL_KEYS = frozenset({
 DEFAULT_NOME_AGENTE = "OdontoGPT"
 DEFAULT_TOM = "acolhedor"
 DEFAULT_HABILIDADES = {k: True for k in sorted(VALID_SKILL_KEYS)}
+
+_ENTREGA_RE = re.compile(
+    r":::entrega\s+tipo=\"(?P<tipo>relatorio|apresentacao)\"\s+titulo=\"(?P<titulo>[^\"]+)\"\s*\n(?P<body>.*?)\n:::",
+    re.DOTALL | re.IGNORECASE,
+)
 
 
 def _now_sql() -> str:
@@ -73,6 +79,77 @@ def ensure_schema() -> None:
                 updated_at TEXT NOT NULL
             )"""
         )
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS admin_agent_entregas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                message_id INTEGER,
+                tipo TEXT NOT NULL,
+                titulo TEXT NOT NULL,
+                corpo_md TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )"""
+        )
+        c.execute(
+            "CREATE INDEX IF NOT EXISTS idx_admin_agent_ent_sess ON admin_agent_entregas(session_id, id DESC)"
+        )
+
+
+def parse_entrega(text: str) -> tuple[str, dict[str, Any] | None]:
+    raw = text or ""
+    m = _ENTREGA_RE.search(raw)
+    if not m:
+        return raw, None
+    tipo = m.group("tipo").lower()
+    titulo = m.group("titulo").strip()[:200]
+    corpo = m.group("body").strip()
+    display = (raw[: m.start()] + raw[m.end() :]).strip()
+    if not display:
+        display = f"Preparei: {titulo}"
+    return display, {"tipo": tipo, "titulo": titulo, "corpo_md": corpo}
+
+
+def save_entrega(
+    session_id: str,
+    message_id: int | None,
+    tipo: str,
+    titulo: str,
+    corpo_md: str,
+) -> dict[str, Any]:
+    if tipo not in ("relatorio", "apresentacao"):
+        raise ValueError("tipo inválido")
+    ensure_schema()
+    now = _now_sql()
+    with _rw() as c:
+        cur = c.execute(
+            """INSERT INTO admin_agent_entregas
+               (session_id, message_id, tipo, titulo, corpo_md, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (session_id, message_id, tipo, (titulo or "")[:200], (corpo_md or "")[:50000], now),
+        )
+        eid = int(cur.lastrowid or 0)
+    return {
+        "id": eid,
+        "session_id": session_id,
+        "message_id": message_id,
+        "tipo": tipo,
+        "titulo": titulo[:200],
+        "corpo_md": corpo_md,
+        "created_at": now,
+    }
+
+
+def list_entregas(session_id: str, limit: int = 40) -> list[dict[str, Any]]:
+    ensure_schema()
+    with _rw() as c:
+        rows = c.execute(
+            """SELECT id, session_id, message_id, tipo, titulo, corpo_md, created_at
+               FROM admin_agent_entregas
+               WHERE session_id = ?
+               ORDER BY id DESC LIMIT ?""",
+            (session_id, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def append(
