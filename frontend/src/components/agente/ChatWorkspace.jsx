@@ -205,6 +205,7 @@ export default function ChatWorkspace({
                       compact
                       onOpen={onOpenEntrega}
                       onPedirAjuste={onPedirAjuste}
+                      ajusteDisabled={sending}
                     />
                   </div>
                 )}

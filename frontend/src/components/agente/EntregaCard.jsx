@@ -13,7 +13,7 @@ function downloadMd(titulo, corpo) {
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
-export default function EntregaCard({ entrega, onOpen, onPedirAjuste, compact }) {
+export default function EntregaCard({ entrega, onOpen, onPedirAjuste, compact, ajusteDisabled = false }) {
   if (!entrega) return null
   const Icon = entrega.tipo === 'apresentacao' ? Presentation : FileText
   return (
@@ -44,7 +44,14 @@ export default function EntregaCard({ entrega, onOpen, onPedirAjuste, compact })
           <Download size={12} /> Baixar
         </Button>
         {onPedirAjuste && (
-          <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" onClick={() => onPedirAjuste(entrega)}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs"
+            disabled={ajusteDisabled}
+            onClick={() => onPedirAjuste(entrega)}
+          >
             Pedir ajuste
           </Button>
         )}

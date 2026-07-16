@@ -31,6 +31,10 @@ const DEFAULT_PREFS = {
   },
 }
 
+function normalizeOperador(value) {
+  return (value || 'Gerente').trim() || 'Gerente'
+}
+
 function isImageAnexo(f) {
   const mime = String(f?.mime || f?.content_type || '').toLowerCase()
   if (mime.startsWith('image/')) return true
@@ -44,7 +48,14 @@ export default function AgenteAdmin() {
   const [error, setError] = useState(null)
   const [texto, setTexto] = useState('')
   const [sending, setSending] = useState(false)
-  const [operador, setOperador] = useState(() => localStorage.getItem(OPERADOR_KEY) || 'Gerente')
+  // Committed session key (localStorage) — drives load/poll API calls
+  const [operador, setOperador] = useState(() =>
+    normalizeOperador(localStorage.getItem(OPERADOR_KEY))
+  )
+  // Draft for "Seu nome no histórico" — does not reload until Salvar
+  const [operadorDraft, setOperadorDraft] = useState(() =>
+    normalizeOperador(localStorage.getItem(OPERADOR_KEY))
+  )
   const [loading, setLoading] = useState(true)
   const [briefing, setBriefing] = useState(null)
   const [quickPrompts, setQuickPrompts] = useState([])
@@ -63,13 +74,26 @@ export default function AgenteAdmin() {
   const recognitionRef = useRef(null)
   const lastIdRef = useRef(0)
 
+  // Normalized session key — never empty string in API calls
+  const opKey = useMemo(() => normalizeOperador(operador), [operador])
+
   useEffect(() => {
     lastIdRef.current = lastId
   }, [lastId])
 
+  // Mobile drawer: lock body scroll while open
+  useEffect(() => {
+    if (!drawer) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = prev
+    }
+  }, [drawer])
+
   const load = useCallback(
     (after = 0) => {
-      return getAgentMensagens(operador, { after_id: after, limit: 120 })
+      return getAgentMensagens(opKey, { after_id: after, limit: 120 })
         .then(d => {
           const batch = d.data || []
           if (after > 0) {
@@ -87,14 +111,14 @@ export default function AgenteAdmin() {
         .catch(setError)
         .finally(() => setLoading(false))
     },
-    [operador]
+    [opKey]
   )
 
   const refreshEntregas = useCallback(() => {
-    return getAgentEntregas(operador.trim() || 'Gerente')
+    return getAgentEntregas(opKey)
       .then(d => setEntregas(d.data || []))
       .catch(() => {})
-  }, [operador])
+  }, [opKey])
 
   const refreshBriefing = useCallback((silent = false) => {
     return getAgentBriefing()
@@ -110,14 +134,17 @@ export default function AgenteAdmin() {
       })
   }, [])
 
-  // Load messages + prefs + entregas + briefing when operador changes
+  // Load messages + prefs + entregas + briefing when committed operador changes
   useEffect(() => {
     setLoading(true)
     setMsgs([])
     setLastId(0)
+    lastIdRef.current = 0
     setError(null)
+    // Keep draft in sync when session key commits (e.g. after Salvar)
+    setOperadorDraft(opKey)
     load(0)
-    getAgentPreferencias(operador.trim() || 'Gerente')
+    getAgentPreferencias(opKey)
       .then(p => {
         setPrefs(p)
         setPrefsDraft(p)
@@ -128,7 +155,7 @@ export default function AgenteAdmin() {
       })
     refreshEntregas()
     refreshBriefing(false)
-  }, [load, operador, refreshEntregas, refreshBriefing])
+  }, [load, opKey, refreshEntregas, refreshBriefing])
 
   // Poll briefing every 60s (silent)
   useEffect(() => {
@@ -203,11 +230,11 @@ export default function AgenteAdmin() {
   }
 
   async function sendMessage(textOverride) {
+    if (sending) return
     const text = (textOverride ?? texto).trim()
     const ids = pendingFiles.map(f => f.id)
     if (!text && !ids.length) return
-    const op = operador.trim() || 'Gerente'
-    localStorage.setItem(OPERADOR_KEY, op)
+    localStorage.setItem(OPERADOR_KEY, opKey)
     if (listening) recognitionRef.current?.stop()
     setListening(false)
 
@@ -220,7 +247,7 @@ export default function AgenteAdmin() {
     setSending(true)
     setError(null)
     try {
-      await enviarAgentChat(text, op, true, ids)
+      await enviarAgentChat(text, opKey, true, ids)
       setTexto('')
       setPendingFiles([])
       await load(lastIdRef.current)
@@ -236,17 +263,19 @@ export default function AgenteAdmin() {
   async function savePrefs() {
     setSavingPrefs(true)
     setError(null)
-    const op = (operador || 'Gerente').trim() || 'Gerente'
+    const nextOp = normalizeOperador(operadorDraft)
+    // Commit session key → triggers load/poll effects; then persist prefs
+    setOperador(nextOp)
+    localStorage.setItem(OPERADOR_KEY, nextOp)
     try {
       const saved = await salvarAgentPreferencias({
-        operador: op,
+        operador: nextOp,
         nome_agente: prefsDraft?.nome_agente || DEFAULT_PREFS.nome_agente,
         tom: prefsDraft?.tom || DEFAULT_PREFS.tom,
         habilidades: prefsDraft?.habilidades || DEFAULT_PREFS.habilidades,
       })
       setPrefs(saved)
       setPrefsDraft(saved)
-      localStorage.setItem(OPERADOR_KEY, op)
     } catch (ex) {
       setError(ex)
     } finally {
@@ -255,6 +284,7 @@ export default function AgenteAdmin() {
   }
 
   function handlePedirAjuste(entrega) {
+    if (sending) return
     const titulo = entrega?.titulo || 'sem título'
     sendMessage(
       `Ajuste a entrega "${titulo}": refine o conteúdo, melhore clareza e mantenha o formato de entrega formal.`
@@ -286,14 +316,15 @@ export default function AgenteAdmin() {
         onChange={setPrefsDraft}
         onSave={savePrefs}
         saving={savingPrefs}
-        operador={operador}
-        onOperadorChange={setOperador}
+        operador={operadorDraft}
+        onOperadorChange={setOperadorDraft}
       />
       <div className="mt-3">
         <EntregasPanel
           entregas={entregas}
           onOpen={setOpenEntrega}
           onPedirAjuste={handlePedirAjuste}
+          sending={sending}
         />
       </div>
     </>
