@@ -8,7 +8,6 @@ import {
   X,
   Sparkles,
 } from 'lucide-react'
-import ErrorState from '../ErrorState'
 import Loading from '../Loading'
 import { Button } from '@/components/ui/button'
 import EntregaCard from './EntregaCard'
@@ -93,7 +92,7 @@ export default function ChatWorkspace({
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border-subtle bg-surface-2 shadow-card">
       <header className="flex flex-wrap items-center gap-3 border-b border-border-subtle px-4 py-3">
         <div
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent/15 font-display text-sm font-semibold text-accent-deep"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent-soft font-display text-sm font-semibold text-accent-deep"
           aria-hidden
         >
           {initials}
@@ -123,7 +122,9 @@ export default function ChatWorkspace({
 
       {error && (
         <div className="px-4 pt-3">
-          <ErrorState message={error?.message || error} />
+          <div className="rounded-xl border border-danger/20 bg-danger/5 px-3 py-2 text-sm text-danger" role="alert">
+            {error?.message || String(error)}
+          </div>
         </div>
       )}
 
@@ -181,9 +182,21 @@ export default function ChatWorkspace({
                 )}
                 <p className="whitespace-pre-wrap break-words">{m.conteudo}</p>
                 {m.meta?.anexos?.length > 0 && (
-                  <p className={`mt-1 text-[10px] ${out ? 'text-white/80' : 'text-ink-tertiary'}`}>
-                    Anexos: {m.meta.anexos.map(a => a.filename || a.localName).join(', ')}
-                  </p>
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {m.meta.anexos.map((a, i) => (
+                      <span
+                        key={a.filename || a.localName || i}
+                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] ${
+                          out
+                            ? 'bg-white/20 text-white/90'
+                            : 'bg-surface-2 text-ink-secondary'
+                        }`}
+                      >
+                        <Paperclip size={10} />
+                        {a.filename || a.localName}
+                      </span>
+                    ))}
+                  </div>
                 )}
                 {m.meta?.entrega && (
                   <div className="mt-2">
@@ -210,7 +223,9 @@ export default function ChatWorkspace({
             aria-live="polite"
           >
             <Loader2 className="animate-spin" size={14} />
-            {statusText || 'Organizando o que vi na clínica…'}
+            {statusText && statusText.trim() && statusText.trim() !== 'Online'
+              ? statusText
+              : 'Organizando o que vi na clínica…'}
           </div>
         )}
         <div ref={bottomRef} />
@@ -237,7 +252,13 @@ export default function ChatWorkspace({
             ))}
           </div>
         )}
-        <form onSubmit={onSend} className="flex flex-col gap-2 sm:flex-row sm:items-end">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            onSend?.(e)
+          }}
+          className="flex flex-col gap-2 sm:flex-row sm:items-end"
+        >
           <div className="flex flex-1 gap-2">
             <input
               ref={fileRef}
@@ -273,7 +294,7 @@ export default function ChatWorkspace({
               value={texto}
               onChange={e => setTexto?.(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Escreva ou dite sua pergunta…"
+              placeholder="Escreva, anexe um arquivo ou use o microfone…"
               disabled={sending}
               rows={2}
               className="min-h-[44px] flex-1 resize-y rounded-xl border border-border-subtle bg-surface-1 px-3 py-2 text-sm text-ink placeholder:text-ink-tertiary focus:outline-none focus:ring-2 focus:ring-accent/30"
