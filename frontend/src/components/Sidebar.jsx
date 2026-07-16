@@ -1,55 +1,112 @@
 import { useState, useEffect, useRef } from "react"
 import { NavLink } from "react-router-dom"
-import { LayoutDashboard, Users, CalendarDays, FileText, MessageSquare, Bell, LogOut, Menu, X, Sparkles, GraduationCap, Scan } from "lucide-react"
+import {
+  LayoutDashboard,
+  Users,
+  CalendarDays,
+  FileText,
+  MessageSquare,
+  LogOut,
+  Menu,
+  X,
+  Sparkles,
+  Smartphone,
+  Building2,
+  Stethoscope,
+  FileSpreadsheet,
+  Wallet,
+  Shield,
+} from "lucide-react"
 import { motion, AnimatePresence } from "framer-motion"
 import { logout as apiLogout } from "../api"
 
-const NAV_ITEMS = [
-  { to: "/",            end: true, label: "Visão Geral",     icon: LayoutDashboard },
-  { to: "/pacientes",   end: false, label: "Pacientes",      icon: Users },
-  { to: "/agendamentos",end: false, label: "Agenda",         icon: CalendarDays },
-  { to: "/prontuarios", end: false, label: "Prontuários",    icon: FileText },
-  { to: "/conversas",   end: false, label: "Conversas",      icon: MessageSquare },
-  { to: "/agente",      end: false, label: "Assistente",     icon: Sparkles },
-  { to: "/lembretes",   end: false, label: "Lembretes",      icon: Bell },
-  { to: "/estudantes",  end: false, label: "Estudantes",     icon: GraduationCap },
-  { to: "/vision",      end: false, label: "Odonto Vision",  icon: Scan },
+/**
+ * Navegação em 3 áreas: Atendimento · Comercial · Gestão
+ */
+const NAV_GROUPS = [
+  {
+    id: "atendimento",
+    label: "Atendimento",
+    items: [
+      { to: "/pacientes", end: false, label: "Pacientes", icon: Users },
+      { to: "/agendamentos", end: false, label: "Agenda", icon: CalendarDays },
+      { to: "/conversas", end: false, label: "Conversas", icon: MessageSquare },
+      { to: "/prontuarios", end: false, label: "Prontuários", icon: FileText },
+      { to: "/simulador", end: false, label: "Simular cliente", icon: Smartphone },
+    ],
+  },
+  {
+    id: "comercial",
+    label: "Comercial",
+    items: [
+      { to: "/orcamentos", end: false, label: "Orçamentos", icon: FileSpreadsheet },
+      { to: "/financeiro", end: false, label: "Financeiro", icon: Wallet },
+    ],
+  },
+  {
+    id: "gestao",
+    label: "Gestão",
+    items: [
+      { to: "/", end: true, label: "Visão geral", icon: LayoutDashboard },
+      { to: "/agente", end: false, label: "Agente", icon: Sparkles },
+      { to: "/operacao", end: false, label: "NPS / Segurança", icon: Shield },
+      { to: "/dentistas", end: false, label: "Dentistas", icon: Stethoscope },
+      { to: "/clinica", end: false, label: "Dados da clínica", icon: Building2 },
+    ],
+  },
 ]
+
+function NavLinkItem({ to, end, label, icon: Icon, onNavigate }) {
+  return (
+    <NavLink
+      to={to}
+      end={end}
+      onClick={onNavigate}
+      className={({ isActive }) =>
+        `group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-200 ${
+          isActive
+            ? "bg-accent/15 text-accent"
+            : "text-white/60 hover:bg-white/10 hover:text-white"
+        }`
+      }
+    >
+      {({ isActive }) => (
+        <>
+          <Icon
+            size={17}
+            strokeWidth={1.9}
+            className={isActive ? "text-accent" : "text-white/40 group-hover:text-white/70"}
+          />
+          <span className="flex-1 truncate">{label}</span>
+          {isActive && (
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
+          )}
+        </>
+      )}
+    </NavLink>
+  )
+}
 
 function NavItems({ onNavigate }) {
   return (
-    <nav className="flex flex-1 flex-col gap-0.5" aria-label="Navegação principal">
-      {NAV_ITEMS.map(({ to, end, label, icon: Icon }) => (
-        <NavLink
-          key={to}
-          to={to}
-          end={end}
-          onClick={onNavigate}
-          className={({ isActive }) =>
-            `group relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200 ${
-              isActive
-                ? "bg-accent/15 text-accent"
-                : "text-white/60 hover:bg-white/10 hover:text-white"
-            }`
-          }
-        >
-          {({ isActive }) => (
-            <>
-              <Icon
-                size={18}
-                strokeWidth={1.9}
-                className={isActive ? "text-accent" : "text-white/40 group-hover:text-white/70"}
-              />
-              <span className="flex-1">{label}</span>
-              {isActive && (
-                <span
-                  className="h-1.5 w-1.5 rounded-full bg-accent"
-                  aria-hidden
-                />
-              )}
-            </>
-          )}
-        </NavLink>
+    <nav
+      className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pr-1 [-ms-overflow-style:none] [scrollbar-width:thin] [scrollbar-color:rgba(255,255,255,0.2)_transparent]"
+      aria-label="Navegação principal"
+    >
+      {NAV_GROUPS.map((group) => (
+        <div key={group.id} role="group" aria-labelledby={`nav-group-${group.id}`}>
+          <p
+            id={`nav-group-${group.id}`}
+            className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-white/35"
+          >
+            {group.label}
+          </p>
+          <div className="flex flex-col gap-0.5">
+            {group.items.map((item) => (
+              <NavLinkItem key={item.to} {...item} onNavigate={onNavigate} />
+            ))}
+          </div>
+        </div>
       ))}
     </nav>
   )
@@ -89,7 +146,6 @@ export default function Sidebar() {
         )}
       </AnimatePresence>
 
-      {/* Sidebar (mobile = drawer, desktop = fixed) */}
       <MobileSidebarDrawer
         open={open}
         onClose={() => setOpen(false)}
@@ -106,7 +162,7 @@ export default function Sidebar() {
 function SidebarContent({ onNavigate, onLogout, onClose }) {
   return (
     <>
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-5 flex shrink-0 items-center justify-between">
         <img
           src="/logo-odontogpt-branca.png"
           alt="OdontoGPT"
@@ -123,18 +179,18 @@ function SidebarContent({ onNavigate, onLogout, onClose }) {
         )}
       </div>
 
-      <div className="mb-2 flex items-center gap-2 px-2">
+      <div className="mb-1 flex shrink-0 items-center gap-2 px-2">
         <span className="font-display text-lg font-semibold tracking-tight text-white">
           Sua clínica
         </span>
       </div>
-      <p className="mb-6 px-2 text-xs text-white/50">
+      <p className="mb-4 shrink-0 px-2 text-xs text-white/50">
         Painel operacional
       </p>
 
       <NavItems onNavigate={onNavigate} />
 
-      <div className="mt-6 border-t border-white/10 pt-4">
+      <div className="mt-4 shrink-0 border-t border-white/10 pt-3">
         <button
           onClick={onLogout}
           className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-white/40 transition-all duration-200 hover:bg-white/10 hover:text-white"
@@ -147,8 +203,8 @@ function SidebarContent({ onNavigate, onLogout, onClose }) {
   )
 }
 
-
-const FOCUSABLE_SEL = 'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+const FOCUSABLE_SEL =
+  'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
 function MobileSidebarDrawer({ open, onClose, onLogout }) {
   const ref = useRef(null)
@@ -162,13 +218,22 @@ function MobileSidebarDrawer({ open, onClose, onLogout }) {
       else ref.current?.focus()
     }, 80)
     function onKey(e) {
-      if (e.key === "Escape") { onClose(); return }
+      if (e.key === "Escape") {
+        onClose()
+        return
+      }
       if (e.key !== "Tab") return
       const f = Array.from(ref.current?.querySelectorAll(FOCUSABLE_SEL) || [])
       if (f.length === 0) return
-      const first = f[0], last = f[f.length - 1]
-      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
-      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+      const first = f[0]
+      const last = f[f.length - 1]
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault()
+        first.focus()
+      }
     }
     document.addEventListener("keydown", onKey)
     document.body.style.overflow = "hidden"
@@ -179,6 +244,7 @@ function MobileSidebarDrawer({ open, onClose, onLogout }) {
       prevFocus.current?.focus?.()
     }
   }, [open, onClose])
+
   return (
     <AnimatePresence>
       {open && (

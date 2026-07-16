@@ -116,6 +116,15 @@ body {
 }
 .today-pulse { animation: today-pulse 2.4s ease-in-out infinite; }
 
+/* Entrada suave de mensagens do agente */
+@keyframes agent-msg-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.agent-msg-in {
+  animation: agent-msg-in 0.28s ease-out;
+}
+
 /* prefers-reduced-motion */
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -126,6 +135,7 @@ body {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+  .agent-msg-in { animation: none; }
 }
 
 /* Print: limpa navegação, mostra só conteúdo */
