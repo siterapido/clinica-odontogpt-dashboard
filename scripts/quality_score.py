@@ -87,6 +87,7 @@ def main() -> int:
     add(40, file_exists(f"{ROOT}/backend/insights_service.py"), "Insights briefing clínica")
     add(40, file_exists(f"{ROOT}/backend/media_service.py"), "Upload multimodal assistente")
     add(30, _http_json_ok("http://127.0.0.1:8001/api/agent/briefing", auth=True), "API agent briefing")
+    add(20, _http_json_ok("http://127.0.0.1:8001/api/agent/preferencias?operador=Gerente", auth=True), "API agent preferencias")
     add(40, file_exists("/root/.hermes-docker/profiles/odonto-gpt/skills/odonto_crm/SKILL.md"), "Skill odonto_crm")
     add(40, file_exists("/root/.hermes-docker/profiles/odonto-gpt/scripts/odonto_crm_mcp.py"), "MCP odonto-crm")
     add(50, http_ok("http://127.0.0.1:8001/api/health"), "Backend :8001 health")
