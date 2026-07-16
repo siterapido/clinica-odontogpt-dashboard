@@ -7,8 +7,10 @@ function downloadMd(titulo, corpo) {
   const a = document.createElement('a')
   a.href = url
   a.download = `${(titulo || 'entrega').replace(/[^\w\-]+/g, '_').slice(0, 60)}.md`
+  document.body.appendChild(a)
   a.click()
-  URL.revokeObjectURL(url)
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 export default function EntregaCard({ entrega, onOpen, onPedirAjuste, compact }) {

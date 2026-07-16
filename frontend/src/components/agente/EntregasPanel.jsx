@@ -12,8 +12,8 @@ export default function EntregasPanel({ entregas, onOpen, onPedirAjuste }) {
         </p>
       )}
       <ul className="max-h-48 space-y-2 overflow-y-auto">
-        {(entregas || []).map(e => (
-          <li key={e.id}>
+        {(entregas || []).map((e, i) => (
+          <li key={`${e.id ?? 'e'}-${i}`}>
             <EntregaCard entrega={e} onOpen={onOpen} onPedirAjuste={onPedirAjuste} compact />
           </li>
         ))}
