@@ -109,12 +109,21 @@ def test_cancelar_enfileira_oferta_lista_espera(crm_db):
         procedimento="Avaliação",
     )
     assert v2.cancelar_agendamento_v2(aid, motivo="paciente cancelou") is True
+    conn = sqlite3.connect(crm_db)
     # deve existir lembrete tipo lista_espera pendente para paciente 2
-    rows = sqlite3.connect(crm_db).execute(
+    rows = conn.execute(
         """SELECT paciente_id, tipo, status FROM lembretes
            WHERE tipo='lista_espera' AND status='pendente'"""
     ).fetchall()
     assert any(r[0] == 2 for r in rows)
+    # hold: lista_espera do paciente 2 fica ofertado apontando ao slot cancelado
+    le = conn.execute(
+        """SELECT status, ofertado_agendamento_id FROM lista_espera
+           WHERE paciente_id=2"""
+    ).fetchone()
+    assert le is not None
+    assert le[0] == "ofertado"
+    assert le[1] == aid
 
 
 def test_worker_helper_skip_se_agendamento_cancelado(crm_db):
