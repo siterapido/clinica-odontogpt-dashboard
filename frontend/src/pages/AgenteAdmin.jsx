@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { X } from 'lucide-react'
+import { X, Target } from 'lucide-react'
 import {
   getAgentMensagens,
   enviarAgentChat,
@@ -11,8 +11,9 @@ import {
 } from '../api'
 import Observatorio from '../components/agente/Observatorio'
 import ChatWorkspace from '../components/agente/ChatWorkspace'
-import PreferenciasAgente, { TONS } from '../components/agente/PreferenciasAgente'
-import EntregasPanel from '../components/agente/EntregasPanel'
+import ConfigAgenteModal from '../components/agente/ConfigAgenteModal'
+import EntregasSheet from '../components/agente/EntregasSheet'
+import { buildWorkSteps, missionStatusLabel } from '../components/agente/workSteps'
 import { Button } from '@/components/ui/button'
 
 const OPERADOR_KEY = 'odontogpt_admin_operador'
@@ -42,17 +43,19 @@ function isImageAnexo(f) {
   return /\.(png|jpe?g|gif|webp|bmp|heic)$/i.test(name)
 }
 
+/**
+ * Console do Agente Autônomo — princípios AG-UI (timeline, estado, steps).
+ * Identidade e habilidades ficam em Config (⚙), fora do caminho crítico.
+ */
 export default function AgenteAdmin() {
   const [msgs, setMsgs] = useState([])
   const [lastId, setLastId] = useState(0)
   const [error, setError] = useState(null)
   const [texto, setTexto] = useState('')
   const [sending, setSending] = useState(false)
-  // Committed session key (localStorage) — drives load/poll API calls
   const [operador, setOperador] = useState(() =>
     normalizeOperador(localStorage.getItem(OPERADOR_KEY))
   )
-  // Draft for "Seu nome no histórico" — does not reload until Salvar
   const [operadorDraft, setOperadorDraft] = useState(() =>
     normalizeOperador(localStorage.getItem(OPERADOR_KEY))
   )
@@ -66,30 +69,31 @@ export default function AgenteAdmin() {
   const [prefsDraft, setPrefsDraft] = useState(DEFAULT_PREFS)
   const [savingPrefs, setSavingPrefs] = useState(false)
   const [entregas, setEntregas] = useState([])
-  const [drawer, setDrawer] = useState(null) // null | 'obs' | 'prefs'
+  const [drawer, setDrawer] = useState(null) // null | 'mission'
+  const [configOpen, setConfigOpen] = useState(false)
+  const [entregasOpen, setEntregasOpen] = useState(false)
   const [openEntrega, setOpenEntrega] = useState(null)
   const [statusHint, setStatusHint] = useState(null)
+  const [workSteps, setWorkSteps] = useState([])
 
   const fileRef = useRef(null)
   const recognitionRef = useRef(null)
   const lastIdRef = useRef(0)
 
-  // Normalized session key — never empty string in API calls
   const opKey = useMemo(() => normalizeOperador(operador), [operador])
 
   useEffect(() => {
     lastIdRef.current = lastId
   }, [lastId])
 
-  // Mobile drawer: lock body scroll while open
   useEffect(() => {
-    if (!drawer) return
+    if (!drawer && !configOpen && !entregasOpen) return
     const prev = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     return () => {
       document.body.style.overflow = prev
     }
-  }, [drawer])
+  }, [drawer, configOpen, entregasOpen])
 
   const load = useCallback(
     (after = 0) => {
@@ -105,7 +109,9 @@ export default function AgenteAdmin() {
             setMsgs(batch)
           }
           if (batch.length) {
-            setLastId(Math.max(...batch.map(m => m.id), after))
+            const maxId = Math.max(...batch.map(m => m.id), after)
+            setLastId(maxId)
+            lastIdRef.current = maxId
           }
         })
         .catch(setError)
@@ -129,43 +135,36 @@ export default function AgenteAdmin() {
       })
       .catch(() => {
         if (!silent) {
-          /* ignore soft failures on poll */
+          /* briefing optional for console */
         }
       })
   }, [])
 
-  // Load messages + prefs + entregas + briefing when committed operador changes
   useEffect(() => {
     setLoading(true)
     setMsgs([])
     setLastId(0)
     lastIdRef.current = 0
-    setError(null)
-    // Keep draft in sync when session key commits (e.g. after Salvar)
-    setOperadorDraft(opKey)
     load(0)
     getAgentPreferencias(opKey)
       .then(p => {
         setPrefs(p)
         setPrefsDraft(p)
+        setOperadorDraft(normalizeOperador(p.operador || opKey))
       })
       .catch(() => {
         setPrefs(DEFAULT_PREFS)
         setPrefsDraft(DEFAULT_PREFS)
       })
     refreshEntregas()
-    refreshBriefing(false)
+    refreshBriefing()
   }, [load, opKey, refreshEntregas, refreshBriefing])
 
-  // Poll briefing every 60s (silent)
   useEffect(() => {
-    const t = setInterval(() => {
-      refreshBriefing(true)
-    }, 60000)
+    const t = setInterval(() => refreshBriefing(true), 60000)
     return () => clearInterval(t)
   }, [refreshBriefing])
 
-  // SpeechRecognition
   useEffect(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SR) return
@@ -185,21 +184,26 @@ export default function AgenteAdmin() {
     recognitionRef.current = rec
   }, [])
 
-  // Escape closes drawer / modal
   useEffect(() => {
     function onKey(e) {
       if (e.key !== 'Escape') return
       if (openEntrega) setOpenEntrega(null)
+      else if (configOpen) setConfigOpen(false)
+      else if (entregasOpen) setEntregasOpen(false)
       else if (drawer) setDrawer(null)
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [drawer, openEntrega])
+  }, [drawer, openEntrega, configOpen, entregasOpen])
 
   function toggleMic() {
     const rec = recognitionRef.current
     if (!rec) {
-      setError(new Error('Microfone por voz não suportado neste navegador. Use Chrome/Edge.'))
+      setError(
+        new Error(
+          'Microfone por voz não está disponível neste navegador. Use Chrome ou Edge, ou digite a ordem.'
+        )
+      )
       return
     }
     if (listening) {
@@ -239,11 +243,15 @@ export default function AgenteAdmin() {
     setListening(false)
 
     const hadImages = pendingFiles.some(isImageAnexo)
+    const hadFiles = pendingFiles.length > 0
     const aboutRelatorio = /relat[oó]rio|apresenta(ção|cao)?|pauta/i.test(text)
-    if (hadImages) setStatusHint('Olhando o que você anexou…')
-    else if (aboutRelatorio) setStatusHint('Montando o relatório…')
-    else setStatusHint('Organizando o que vi na clínica…')
+    if (hadImages) setStatusHint('Analisando o que você enviou…')
+    else if (aboutRelatorio) setStatusHint('Montando entrega…')
+    else setStatusHint('Trabalhando na sua ordem…')
 
+    setWorkSteps(
+      buildWorkSteps({ text, hasImage: hadImages, hasFiles: hadFiles })
+    )
     setSending(true)
     setError(null)
     try {
@@ -253,10 +261,15 @@ export default function AgenteAdmin() {
       await load(lastIdRef.current)
       await refreshEntregas()
     } catch (ex) {
-      setError(ex)
+      setError(
+        ex?.message?.includes('Não consegui')
+          ? ex
+          : new Error('Não consegui responder agora. Tente de novo em instantes.')
+      )
     } finally {
       setSending(false)
       setStatusHint(null)
+      setWorkSteps([])
     }
   }
 
@@ -265,7 +278,6 @@ export default function AgenteAdmin() {
     setError(null)
     const nextOp = normalizeOperador(operadorDraft)
     try {
-      // Persist first; only commit session key after successful save
       const saved = await salvarAgentPreferencias({
         operador: nextOp,
         nome_agente: prefsDraft?.nome_agente || DEFAULT_PREFS.nome_agente,
@@ -276,7 +288,7 @@ export default function AgenteAdmin() {
       localStorage.setItem(OPERADOR_KEY, nextOp)
       setPrefs(saved)
       setPrefsDraft(saved)
-    } catch (ex) {
+    } catch {
       setError(new Error('Não salvei as preferências.'))
     } finally {
       setSavingPrefs(false)
@@ -291,58 +303,46 @@ export default function AgenteAdmin() {
     )
   }
 
-  const statusText = sending
-    ? statusHint || 'Organizando o que vi na clínica…'
-    : 'Online'
-
-  const tomLabel =
-    TONS.find(t => t.id === (prefs?.tom || prefsDraft?.tom))?.label || 'Acolhedor'
+  const statusText = missionStatusLabel({
+    sending,
+    statusHint,
+    listening,
+  })
 
   const nomeAgente = prefs?.nome_agente || prefsDraft?.nome_agente || 'OdontoGPT'
 
-  const emptySuggestions = useMemo(
-    () =>
-      (quickPrompts || []).slice(0, 3).map(q => ({
-        label: q.label,
-        prompt: q.prompt,
-      })),
-    [quickPrompts]
-  )
-
-  const prefsPanel = (
-    <>
-      <PreferenciasAgente
-        value={prefsDraft}
-        onChange={setPrefsDraft}
-        onSave={savePrefs}
-        saving={savingPrefs}
-        operador={operadorDraft}
-        onOperadorChange={setOperadorDraft}
-      />
-      <div className="mt-3">
-        <EntregasPanel
-          entregas={entregas}
-          onOpen={setOpenEntrega}
-          onPedirAjuste={handlePedirAjuste}
-          sending={sending}
-        />
-      </div>
-    </>
-  )
+  const emptySuggestions = useMemo(() => {
+    const fromApi = (quickPrompts || []).slice(0, 2).map(q => ({
+      label: q.label,
+      prompt: q.prompt,
+    }))
+    return [
+      ...fromApi,
+      {
+        label: 'Relatório do dia',
+        prompt:
+          'Prepare um relatório executivo do dia da clínica com agenda, riscos e 3 ações. Use o formato de entrega formal se possível.',
+      },
+    ].slice(0, 4)
+  }, [quickPrompts])
 
   return (
     <div className="flex h-full min-h-[640px] flex-col gap-3 lg:flex-row lg:gap-4">
-      {/* Mobile: open drawers */}
+      {/* Mobile: missão */}
       <div className="flex shrink-0 gap-2 lg:hidden">
-        <Button type="button" variant="outline" size="sm" onClick={() => setDrawer('obs')}>
-          Hoje
-        </Button>
-        <Button type="button" variant="outline" size="sm" onClick={() => setDrawer('prefs')}>
-          Seu agente
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="gap-1"
+          onClick={() => setDrawer('mission')}
+        >
+          <Target size={14} />
+          Missão do dia
         </Button>
       </div>
 
-      {/* Left: Observatório (desktop) */}
+      {/* Left: Mission panel */}
       <aside className="hidden shrink-0 overflow-y-auto lg:flex lg:w-72 lg:flex-col xl:w-80">
         <Observatorio
           briefing={briefing}
@@ -353,11 +353,10 @@ export default function AgenteAdmin() {
         />
       </aside>
 
-      {/* Center: Chat */}
+      {/* Center: work timeline */}
       <section className="flex min-h-0 flex-1 flex-col">
         <ChatWorkspace
           nomeAgente={nomeAgente}
-          tomLabel={tomLabel}
           msgs={msgs}
           loading={loading}
           sending={sending}
@@ -372,39 +371,34 @@ export default function AgenteAdmin() {
           onToggleMic={toggleMic}
           onSend={() => sendMessage()}
           statusText={statusText}
+          workSteps={workSteps}
           emptySuggestions={emptySuggestions}
           onSuggestion={prompt => sendMessage(prompt)}
           onOpenEntrega={setOpenEntrega}
           onPedirAjuste={handlePedirAjuste}
+          onOpenConfig={() => setConfigOpen(true)}
+          onOpenEntregas={() => setEntregasOpen(true)}
+          entregasCount={entregas.length}
         />
       </section>
 
-      {/* Right: Preferências + Entregas (desktop) */}
-      <aside className="hidden shrink-0 flex-col gap-3 overflow-y-auto lg:flex lg:w-80">
-        {prefsPanel}
-      </aside>
-
-      {/* Mobile drawers */}
-      {drawer && (
+      {/* Mobile mission drawer */}
+      {drawer === 'mission' && (
         <div className="fixed inset-0 z-40 lg:hidden">
           <button
             type="button"
             className="absolute inset-0 bg-ink/30 backdrop-blur-sm"
-            aria-label="Fechar painel"
+            aria-label="Fechar missão"
             onClick={() => setDrawer(null)}
           />
           <div
             role="dialog"
             aria-modal="true"
-            aria-label={drawer === 'obs' ? 'Hoje na clínica' : 'Seu agente'}
-            className={`absolute top-0 bottom-0 flex w-[min(100%,22rem)] flex-col overflow-y-auto bg-surface p-4 shadow-elev ${
-              drawer === 'obs' ? 'left-0' : 'right-0'
-            }`}
+            aria-label="Missão do dia"
+            className="absolute top-0 bottom-0 left-0 flex w-[min(100%,22rem)] flex-col overflow-y-auto bg-surface p-4 shadow-elev"
           >
             <div className="mb-3 flex items-center justify-between">
-              <p className="font-display text-sm font-semibold text-ink">
-                {drawer === 'obs' ? 'Hoje na clínica' : 'Seu agente'}
-              </p>
+              <p className="font-display text-sm font-semibold text-ink">Missão do dia</p>
               <button
                 type="button"
                 onClick={() => setDrawer(null)}
@@ -414,27 +408,42 @@ export default function AgenteAdmin() {
                 <X size={18} />
               </button>
             </div>
-            {drawer === 'obs' ? (
-              <Observatorio
-                briefing={briefing}
-                quickPrompts={quickPrompts}
-                onPrompt={p => {
-                  setDrawer(null)
-                  sendMessage(p)
-                }}
-                sending={sending}
-                updatedAt={briefUpdatedAt}
-              />
-            ) : (
-              prefsPanel
-            )}
+            <Observatorio
+              briefing={briefing}
+              quickPrompts={quickPrompts}
+              onPrompt={p => {
+                setDrawer(null)
+                sendMessage(p)
+              }}
+              sending={sending}
+              updatedAt={briefUpdatedAt}
+            />
           </div>
         </div>
       )}
 
-      {/* Modal: entrega completa */}
+      <ConfigAgenteModal
+        open={configOpen}
+        onClose={() => setConfigOpen(false)}
+        value={prefsDraft}
+        onChange={setPrefsDraft}
+        onSave={savePrefs}
+        saving={savingPrefs}
+        operador={operadorDraft}
+        onOperadorChange={setOperadorDraft}
+      />
+
+      <EntregasSheet
+        open={entregasOpen}
+        onClose={() => setEntregasOpen(false)}
+        entregas={entregas}
+        onOpen={setOpenEntrega}
+        onPedirAjuste={handlePedirAjuste}
+        sending={sending}
+      />
+
       {openEntrega && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
           <button
             type="button"
             className="absolute inset-0 bg-ink/40 backdrop-blur-sm"
@@ -448,9 +457,14 @@ export default function AgenteAdmin() {
             className="relative max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-border-subtle bg-surface-2 p-5 shadow-elev"
           >
             <div className="mb-3 flex items-start justify-between gap-3">
-              <h2 className="font-display text-lg font-semibold text-ink">
-                {openEntrega.titulo || 'Entrega'}
-              </h2>
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-accent-deep">
+                  Artefato do agente
+                </p>
+                <h2 className="font-display text-lg font-semibold text-ink">
+                  {openEntrega.titulo || 'Entrega'}
+                </h2>
+              </div>
               <button
                 type="button"
                 onClick={() => setOpenEntrega(null)}

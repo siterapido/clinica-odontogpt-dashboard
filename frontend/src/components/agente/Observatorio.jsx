@@ -65,7 +65,7 @@ export default function Observatorio({ briefing, quickPrompts, onPrompt, sending
       <div className="rounded-2xl border border-border-subtle bg-surface-2 p-4 shadow-card">
         <div className="mb-1 flex items-center gap-2">
           <Zap className="text-accent" size={18} />
-          <h2 className="font-display text-sm font-semibold text-ink">Hoje na clínica</h2>
+          <h2 className="font-display text-sm font-semibold text-ink">Missão do dia</h2>
         </div>
         {updatedLabel && (
           <p className="mb-3 text-[10px] text-ink-tertiary">
@@ -175,7 +175,7 @@ export default function Observatorio({ briefing, quickPrompts, onPrompt, sending
 
       <div className="rounded-2xl border border-border-subtle bg-surface-2 p-4 shadow-card">
         <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-tertiary">
-          Pergunte agora
+          Rotinas do agente
         </h3>
         <div className="flex flex-wrap gap-1.5">
           {(quickPrompts || []).map(q => (
