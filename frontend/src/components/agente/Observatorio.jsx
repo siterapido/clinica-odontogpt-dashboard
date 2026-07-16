@@ -9,8 +9,26 @@ function Stat({ label, value, warn }) {
   )
 }
 
+function formatUpdatedAt(updatedAt) {
+  if (!updatedAt) return null
+  if (updatedAt instanceof Date) {
+    return updatedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+  }
+  if (typeof updatedAt === 'string') {
+    const d = new Date(updatedAt)
+    if (Number.isNaN(d.getTime())) return null
+    return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+  }
+  return null
+}
+
 export default function Observatorio({ briefing, quickPrompts, onPrompt, sending, updatedAt }) {
   const b = briefing || {}
+  const fire = (p) => {
+    if (typeof onPrompt === 'function') onPrompt(p)
+  }
+  const updatedLabel = formatUpdatedAt(updatedAt)
+
   return (
     <div className="flex flex-col gap-3">
       <div className="rounded-2xl border border-border-subtle bg-surface-2 p-4 shadow-card">
@@ -18,16 +36,20 @@ export default function Observatorio({ briefing, quickPrompts, onPrompt, sending
           <Zap className="text-accent" size={18} />
           <h2 className="font-display text-sm font-semibold text-ink">Hoje na clínica</h2>
         </div>
-        {updatedAt && (
+        {updatedLabel && (
           <p className="mb-3 text-[10px] text-ink-tertiary">
-            Atualizado às {updatedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+            Atualizado às {updatedLabel}
           </p>
         )}
         <dl className="grid grid-cols-2 gap-2 text-xs">
           <Stat label="Consultas hoje" value={b.agendamentos_hoje} />
           <Stat label="Confirmadas" value={b.confirmados_hoje} />
           <Stat label="Lembretes com problema" value={b.lembretes_falhos} warn={b.lembretes_falhos > 0} />
-          <Stat label="Sem retorno há tempo" value={b.pacientes_sem_retorno_120d} />
+          <Stat
+            label="Sem retorno há tempo"
+            value={b.pacientes_sem_retorno_120d}
+            warn={(b.pacientes_sem_retorno_120d || 0) > 10}
+          />
           <Stat label="Novos (7 dias)" value={b.novos_pacientes_7d} />
           <Stat label="Conversas recentes" value={b.conversas_recentes_48h} />
         </dl>
@@ -41,11 +63,11 @@ export default function Observatorio({ briefing, quickPrompts, onPrompt, sending
               type="button"
               disabled={sending}
               onClick={() =>
-                onPrompt(
+                fire(
                   `Sobre o alerta "${a.titulo}": ${a.detalhe || ''}. Me ajude a entender o impacto e o que fazer agora.`
                 )
               }
-              className={`w-full rounded-xl border px-3 py-2 text-left text-xs transition hover:shadow-card ${
+              className={`w-full rounded-xl border px-3 py-2 text-left text-xs transition hover:shadow-card disabled:opacity-50 ${
                 a.nivel === 'warning'
                   ? 'border-warning/40 bg-warning/10 text-ink'
                   : 'border-border-subtle bg-surface-1 text-ink-secondary'
@@ -77,9 +99,9 @@ export default function Observatorio({ briefing, quickPrompts, onPrompt, sending
               <button
                 type="button"
                 disabled={sending}
-                className="w-full rounded-lg bg-surface-1 px-2 py-1.5 text-left hover:bg-accent/10"
+                className="w-full rounded-lg bg-surface-1 px-2 py-1.5 text-left hover:bg-accent/10 disabled:opacity-50"
                 onClick={() =>
-                  onPrompt(
+                  fire(
                     `Me conte o contexto operacional da consulta das ${row.horario} com ${row.paciente_nome || 'o paciente'} (${row.procedimento || 'procedimento'}).`
                   )
                 }
@@ -103,7 +125,7 @@ export default function Observatorio({ briefing, quickPrompts, onPrompt, sending
               key={q.id}
               type="button"
               disabled={sending}
-              onClick={() => onPrompt(q.prompt)}
+              onClick={() => fire(q.prompt)}
               className="rounded-full border border-accent/25 bg-accent/10 px-2.5 py-1 text-[11px] font-medium text-accent-deep transition hover:bg-accent/20 disabled:opacity-50"
             >
               {q.label}
@@ -113,11 +135,11 @@ export default function Observatorio({ briefing, quickPrompts, onPrompt, sending
             type="button"
             disabled={sending}
             onClick={() =>
-              onPrompt(
+              fire(
                 'Prepare um relatório executivo do dia da clínica com agenda, riscos e 3 ações. Use o formato de entrega formal se possível.'
               )
             }
-            className="rounded-full border border-accent/25 bg-accent/10 px-2.5 py-1 text-[11px] font-medium text-accent-deep"
+            className="rounded-full border border-accent/25 bg-accent/10 px-2.5 py-1 text-[11px] font-medium text-accent-deep disabled:opacity-50"
           >
             Relatório do dia
           </button>
@@ -125,11 +147,11 @@ export default function Observatorio({ briefing, quickPrompts, onPrompt, sending
             type="button"
             disabled={sending}
             onClick={() =>
-              onPrompt(
+              fire(
                 'Monte um outline de apresentação/pauta semanal para a equipe (agenda, financeiro, reativação). Use formato de entrega apresentação.'
               )
             }
-            className="rounded-full border border-accent/25 bg-accent/10 px-2.5 py-1 text-[11px] font-medium text-accent-deep"
+            className="rounded-full border border-accent/25 bg-accent/10 px-2.5 py-1 text-[11px] font-medium text-accent-deep disabled:opacity-50"
           >
             Pauta semanal
           </button>
