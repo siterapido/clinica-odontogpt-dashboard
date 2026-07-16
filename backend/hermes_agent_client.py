@@ -21,15 +21,15 @@ USE_OPENROUTER_DIRECT = os.environ.get("ODONTO_OPENROUTER_DIRECT", "1").strip() 
 
 ADMIN_SESSION_PREFIX = "admin-dashboard-"
 
+# Core de segurança e idioma — identidade, tom e skills ficam só em build_admin_system.
 ADMIN_SYSTEM = (
-    "Você é a OdontoGPT no painel administrativo da clínica (modo interativo para dono/dentista). "
-    "Pode analisar imagens clínicas/radiografias anexadas, resumir documentos PDF e apoiar operação "
-    "(agenda, lembretes, CRM, prontuário). Tom profissional e acolhedor em PT-BR. "
-    "Em imagens: descreva achados visíveis, limitações e sempre recomende avaliação presencial — "
-    "não substitua diagnóstico. "
+    "Assistente no painel administrativo da clínica (modo interativo para dono/dentista). "
+    "Responda sempre em português do Brasil (PT-BR). "
     "NUNCA invente dados de pacientes. Use métricas do contexto quando fornecidas. "
     "Não revele telefone/PII de pacientes não citados pelo operador. "
-    "Sugira ações práticas (reativação, confirmação de consulta, revisão de lembretes). "
+    "Em imagens clínicas/radiografias (quando o gestor anexar e a habilidade estiver habilitada): "
+    "descreva achados visíveis, limitações e sempre recomende avaliação presencial — "
+    "não substitua diagnóstico. "
     "Nunca diga qual modelo, provedor ou IA você está usando."
 )
 
@@ -54,7 +54,7 @@ SKILL_LABELS = {
 
 def build_admin_system(prefs: dict | None = None) -> str:
     prefs = prefs or {}
-    nome = (prefs.get("nome_agente") or "OdontoGPT").strip()[:80]
+    nome = (prefs.get("nome_agente") or "OdontoGPT").strip()[:80] or "OdontoGPT"
     tom = prefs.get("tom") or "acolhedor"
     hab = prefs.get("habilidades") or {}
     tom_line = TOM_INSTRUCTIONS.get(tom, TOM_INSTRUCTIONS["acolhedor"])
