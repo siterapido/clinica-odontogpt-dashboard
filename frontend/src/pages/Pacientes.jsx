@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { Search, Users } from 'lucide-react'
+import { Search, Users, UserPlus } from 'lucide-react'
 import { getPacientes } from '../api'
 import PageHeader from '../components/PageHeader'
+import PacienteFormDrawer from '../components/PacienteFormDrawer'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import Loading from '../components/Loading'
@@ -16,6 +17,8 @@ export default function Pacientes() {
   const [busca, setBusca] = useState('')
   const [page, setPage] = useState(0)
   const [error, setError] = useState(null)
+  const [formOpen, setFormOpen] = useState(false)
+  const [editPaciente, setEditPaciente] = useState(null)
 
   const fetchData = useCallback(() => {
     setError(null)
@@ -30,7 +33,19 @@ export default function Pacientes() {
 
   return (
     <div>
-      <PageHeader title="Pacientes" subtitle="Base de pacientes da clínica" />
+      <PageHeader
+        title="Pacientes"
+        subtitle="Base de pacientes da clínica"
+        action={
+          <button
+            type="button"
+            onClick={() => { setEditPaciente(null); setFormOpen(true) }}
+            className="inline-flex items-center gap-2 rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white shadow-card transition-all hover:bg-accent-hover"
+          >
+            <UserPlus size={16} /> Novo paciente
+          </button>
+        }
+      />
 
       <div className="relative mb-5 max-w-sm">
         <Search size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-tertiary" />
@@ -99,6 +114,12 @@ export default function Pacientes() {
           </div>
         </div>
       )}
+      <PacienteFormDrawer
+        open={formOpen}
+        onClose={() => setFormOpen(false)}
+        paciente={editPaciente}
+        onSaved={() => fetchData()}
+      />
     </div>
   )
 }

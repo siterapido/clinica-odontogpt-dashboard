@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { ArrowLeft, CalendarDays, FileText, MessageSquare } from 'lucide-react'
 import { getPaciente } from '../api'
 import PageHeader from '../components/PageHeader'
+import PacienteFormDrawer from '../components/PacienteFormDrawer'
 import StatusBadge from '../components/StatusBadge'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
@@ -23,9 +24,12 @@ export default function PacienteDetalhe() {
   const navigate = useNavigate()
   const [paciente, setPaciente] = useState(null)
   const [error, setError] = useState(null)
+  const [editOpen, setEditOpen] = useState(false)
+
+  const reload = () => getPaciente(id).then(setPaciente).catch(setError)
 
   useEffect(() => {
-    getPaciente(id).then(setPaciente).catch(setError)
+    reload()
   }, [id])
 
   if (error) return <ErrorState message={error.message} />
@@ -43,6 +47,15 @@ export default function PacienteDetalhe() {
       <PageHeader
         title={paciente.nome}
         subtitle={`Paciente #${paciente.id}${paciente.telefone ? ` · ${paciente.telefone}` : ''}`}
+        action={
+          <button
+            type="button"
+            onClick={() => setEditOpen(true)}
+            className="rounded-xl border border-border-subtle bg-surface-2 px-4 py-2 text-sm font-semibold text-ink transition-colors hover:border-accent"
+          >
+            Editar dados
+          </button>
+        }
       />
 
       <Card className="mb-6">
@@ -152,6 +165,12 @@ export default function PacienteDetalhe() {
           )}
         </CardContent>
       </Card>
+      <PacienteFormDrawer
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        paciente={paciente}
+        onSaved={reload}
+      />
     </div>
   )
 }

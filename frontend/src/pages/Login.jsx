@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { Lock, Loader2 } from 'lucide-react'
 import { login } from '../api'
-import ToothPulse from '../components/ToothPulse'
 import HeartbeatWave from '../components/HeartbeatWave'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -40,32 +39,29 @@ export default function Login({ onLogin }) {
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, ease: 'easeOut' }}
-        className="relative w-full max-w-sm rounded-2xl border border-border-subtle bg-surface-2 p-8 shadow-card-lg"
+        className="relative w-full max-w-sm rounded-2xl border border-white/10 bg-brand-deep p-8 shadow-card-lg"
       >
-        <div className="mb-6 flex flex-col items-center gap-3">
-          <ToothPulse size={32} className="text-accent" />
-          <h1 className="font-display text-xl font-semibold tracking-tight text-ink">
-            OdontoGPT
-          </h1>
-          <p className="text-xs uppercase tracking-[0.2em] text-ink-tertiary">
-            Clínica do Futuro
+        <div className="mb-6 flex flex-col items-center gap-1">
+          <img
+            src="/logo-odontogpt-branca.png"
+            alt="OdontoGPT"
+            className="h-10 w-auto"
+          />
+          <p className="text-xs uppercase tracking-[0.2em] text-white/50">
+            Dashboard
           </p>
         </div>
 
-        <p className="mb-5 text-center text-sm text-ink-secondary">
-          Acesso do painel operacional
-        </p>
-
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           <div className="relative">
-            <Lock size={17} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-tertiary" />
+            <Lock size={17} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-white/40" />
             <Input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Senha"
               autoFocus
-              className="pl-10"
+              className="pl-10 border-white/15 bg-white/10 text-white placeholder:text-white/30 focus:bg-white/15"
               aria-label="Senha de acesso"
             />
           </div>

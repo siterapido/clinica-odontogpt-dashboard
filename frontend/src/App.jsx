@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { Routes, Route } from "react-router-dom"
+import { Routes, Route, useLocation } from "react-router-dom"
 import { getToken } from "./api"
 import Sidebar from "./components/Sidebar"
 import Login from "./pages/Login"
@@ -9,7 +9,35 @@ import PacienteDetalhe from "./pages/PacienteDetalhe"
 import Agendamentos from "./pages/Agendamentos"
 import Prontuarios from "./pages/Prontuarios"
 import Conversas from "./pages/Conversas"
+import AgenteAdmin from "./pages/AgenteAdmin"
 import Lembretes from "./pages/Lembretes"
+import OdontoEstudantes from "./pages/OdontoEstudantes"
+import OdontoVision from "./pages/OdontoVision"
+
+function AppRoutes() {
+  const location = useLocation()
+  const isAssistente = location.pathname === "/agente"
+  const shell = isAssistente
+    ? "h-[calc(100vh-1rem)] md:h-[calc(100vh-2rem)]"
+    : "mx-auto max-w-6xl"
+
+  return (
+    <div className={shell}>
+      <Routes>
+        <Route path="/"               element={<Dashboard />} />
+        <Route path="/pacientes"      element={<Pacientes />} />
+        <Route path="/pacientes/:id"  element={<PacienteDetalhe />} />
+        <Route path="/agendamentos"   element={<Agendamentos />} />
+        <Route path="/prontuarios"    element={<Prontuarios />} />
+        <Route path="/conversas"      element={<Conversas />} />
+        <Route path="/agente"         element={<AgenteAdmin />} />
+        <Route path="/lembretes"      element={<Lembretes />} />
+        <Route path="/estudantes"    element={<OdontoEstudantes />} />
+        <Route path="/vision"        element={<OdontoVision />} />
+      </Routes>
+    </div>
+  )
+}
 
 export default function App() {
   const [authenticated, setAuthenticated] = useState(!!getToken())
@@ -31,18 +59,11 @@ export default function App() {
         Pular para conteúdo
       </a>
       <Sidebar />
-      <main id="main-content" className="min-w-0 flex-1 px-4 py-6 md:px-8 md:py-8">
-        <div className="mx-auto max-w-6xl">
-          <Routes>
-            <Route path="/"               element={<Dashboard />} />
-            <Route path="/pacientes"      element={<Pacientes />} />
-            <Route path="/pacientes/:id"  element={<PacienteDetalhe />} />
-            <Route path="/agendamentos"   element={<Agendamentos />} />
-            <Route path="/prontuarios"    element={<Prontuarios />} />
-            <Route path="/conversas"      element={<Conversas />} />
-            <Route path="/lembretes"      element={<Lembretes />} />
-          </Routes>
-        </div>
+      <main
+        id="main-content"
+        className="min-w-0 flex-1 px-2 py-3 md:px-6 md:py-6"
+      >
+        <AppRoutes />
       </main>
     </div>
   )

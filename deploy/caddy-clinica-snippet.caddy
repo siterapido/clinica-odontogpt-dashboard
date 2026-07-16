@@ -1,0 +1,20 @@
+# Bloco para evolution_caddy — clinica.odontogpt.com
+# Montar no container: -v /root/clinica-odontogpt-dashboard/frontend/dist:/srv/clinica-dashboard:ro
+
+clinica.odontogpt.com {
+	header Alt-Svc "clear"
+
+	@api path /api/*
+	handle @api {
+		reverse_proxy http://172.18.0.1:8001 {
+			flush_interval -1
+		}
+	}
+
+	handle {
+		root * /srv/clinica-dashboard
+		encode zstd gzip
+		try_files {path} /index.html
+		file_server
+	}
+}

@@ -1,11 +1,41 @@
-from fastapi import FastAPI, Query, HTTPException, Depends, Header
+from fastapi import FastAPI, Query, HTTPException, Depends, Header, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
+import json
 from database import query, query_one
 from auth import require_auth, create_token, revoke_token, DASH_PASSWORD
-from models import LoginRequest, LoginResponse
+from models import (
+    LoginRequest,
+    LoginResponse,
+    PacienteCreate,
+    PacienteUpdate,
+    AgendamentoCreate,
+    AgendamentoUpdate,
+    ProntuarioCreate,
+    ProntuarioUpdate,
+    ChatEnviarBody,
+    ChatAssumirBody,
+    AgentChatBody,
+    EstudantesChatBody,
+    VisionAnalyzeBody,
+)
+from crm_service import get_crm, crm_error_to_http
+import chat_store
+from bridge_client import send_text as bridge_send_text
+from chat_store import normalize_phone
+import agent_store
+from hermes_agent_client import ask_admin, admin_session_id, ask_student, ask_vision, estudante_session_id, vision_session_id
+from insights_service import clinic_briefing, QUICK_PROMPTS
+import media_service
+from media_service import save_upload, resolve_upload, file_to_agent_parts, meta_json
 
-app = FastAPI(title="OdontoGPT Dashboard API", version="1.1.0")
+app = FastAPI(title="OdontoGPT Dashboard API", version="1.5.0")
+
+
+@app.on_event("startup")
+def _startup_chat_schema():
+    chat_store.ensure_schema()
+    agent_store.ensure_schema()
 
 app.add_middleware(
     CORSMiddleware,
@@ -141,6 +171,28 @@ def get_paciente(paciente_id: int):
     return paciente
 
 
+@app.post("/api/pacientes", dependencies=[Depends(require_auth)])
+def criar_paciente(body: PacienteCreate):
+    try:
+        crm = get_crm()
+        row = crm.criar_paciente(
+            body.nome, body.telefone, body.data_nascimento, body.indicacao, body.observacoes
+        )
+        return row
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=crm_error_to_http(e))
+
+
+@app.patch("/api/pacientes/{paciente_id}", dependencies=[Depends(require_auth)])
+def atualizar_paciente(paciente_id: int, body: PacienteUpdate):
+    try:
+        crm = get_crm()
+        data = body.model_dump(exclude_unset=True)
+        return crm.atualizar_paciente(paciente_id, **data)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=crm_error_to_http(e))
+
+
 # ─── Agendamentos ───────────────────────────────────────────────────
 
 @app.get("/api/agendamentos", dependencies=[Depends(require_auth)])
@@ -183,6 +235,34 @@ def listar_agendamentos(
     return {"data": rows, "total": total, "limit": limit, "offset": offset}
 
 
+@app.post("/api/agendamentos", dependencies=[Depends(require_auth)])
+def criar_agendamento(body: AgendamentoCreate):
+    try:
+        crm = get_crm()
+        aid = crm.criar_agendamento(
+            body.paciente_id, body.data, body.horario, body.procedimento, body.dentista
+        )
+        row = query_one("SELECT * FROM agendamentos WHERE id = ?", (aid,))
+        return row or {"id": aid, "ok": True}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=crm_error_to_http(e))
+
+
+@app.patch("/api/agendamentos/{agendamento_id}", dependencies=[Depends(require_auth)])
+def atualizar_agendamento(agendamento_id: int, body: AgendamentoUpdate):
+    try:
+        crm = get_crm()
+        data = body.model_dump(exclude_unset=True)
+        ok = crm.atualizar_agendamento(agendamento_id, **data)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Agendamento não encontrado")
+        return query_one("SELECT * FROM agendamentos WHERE id = ?", (agendamento_id,))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=crm_error_to_http(e))
+
+
 # ─── Prontuários ────────────────────────────────────────────────────
 
 @app.get("/api/prontuarios", dependencies=[Depends(require_auth)])
@@ -214,6 +294,184 @@ def listar_prontuarios(
     if ate: csql += " AND pr.data_atendimento <= ?"; cparams.append(ate)
     total = query_one(csql, tuple(cparams))["total"]
     return {"data": rows, "total": total, "limit": limit, "offset": offset}
+
+
+@app.post("/api/prontuarios", dependencies=[Depends(require_auth)])
+def criar_prontuario(body: ProntuarioCreate):
+    try:
+        crm = get_crm()
+        pid = crm.registrar_atendimento(
+            body.paciente_id,
+            body.procedimento,
+            body.data_atendimento,
+            body.dentista,
+            body.queixa_principal,
+            body.exame_clinico,
+            body.diagnostico,
+            body.plano_tratamento,
+            body.observacoes,
+            body.proximo_retorno_dias,
+        )
+        row = query_one("SELECT * FROM prontuario WHERE id = ?", (pid,))
+        return row or {"id": pid, "ok": True}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=crm_error_to_http(e))
+
+
+@app.patch("/api/prontuarios/{prontuario_id}", dependencies=[Depends(require_auth)])
+def atualizar_prontuario(prontuario_id: int, body: ProntuarioUpdate):
+    try:
+        crm = get_crm()
+        data = body.model_dump(exclude_unset=True)
+        ok = crm.atualizar_prontuario(prontuario_id, **data)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Prontuário não encontrado")
+        return query_one("SELECT * FROM prontuario WHERE id = ?", (prontuario_id,))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=crm_error_to_http(e))
+
+
+# ─── Chat atendente (WhatsApp) ──────────────────────────────────────
+
+@app.get("/api/chat/conversas", dependencies=[Depends(require_auth)])
+def chat_listar_conversas(limit: int = Query(50, ge=1, le=100)):
+    return {"data": chat_store.listar_conversas(limit=limit)}
+
+
+@app.get("/api/chat/conversas/{telefone}/mensagens", dependencies=[Depends(require_auth)])
+def chat_mensagens(
+    telefone: str,
+    after_id: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=300),
+):
+    phone = normalize_phone(telefone)
+    if not phone:
+        raise HTTPException(status_code=400, detail="Telefone inválido")
+    return {
+        "telefone": phone,
+        "sessao": chat_store.get_modo(phone),
+        "data": chat_store.listar_mensagens(phone, limit=limit, after_id=after_id),
+    }
+
+
+@app.post("/api/chat/conversas/{telefone}/assumir", dependencies=[Depends(require_auth)])
+def chat_assumir(telefone: str, body: ChatAssumirBody):
+    phone = normalize_phone(telefone)
+    if not phone:
+        raise HTTPException(status_code=400, detail="Telefone inválido")
+    sess = chat_store.set_modo(phone, "human", body.atendente.strip())
+    return {"ok": True, "sessao": sess}
+
+
+@app.post("/api/chat/conversas/{telefone}/devolver", dependencies=[Depends(require_auth)])
+def chat_devolver(telefone: str):
+    phone = normalize_phone(telefone)
+    if not phone:
+        raise HTTPException(status_code=400, detail="Telefone inválido")
+    sess = chat_store.set_modo(phone, "bot", None)
+    return {"ok": True, "sessao": sess}
+
+
+@app.post("/api/chat/conversas/{telefone}/enviar", dependencies=[Depends(require_auth)])
+def chat_enviar(telefone: str, body: ChatEnviarBody):
+    phone = normalize_phone(telefone)
+    if not phone:
+        raise HTTPException(status_code=400, detail="Telefone inválido")
+    sess = chat_store.get_modo(phone)
+    if sess.get("modo") != "human":
+        raise HTTPException(
+            status_code=409,
+            detail="Assuma a conversa antes de enviar mensagens (modo atendente humano).",
+        )
+    atendente = (body.atendente or sess.get("atendente") or "Atendente").strip()
+    ok, info = bridge_send_text(phone, body.mensagem, atendente)
+    if not ok:
+        raise HTTPException(status_code=502, detail=info)
+    return {"ok": True, "bridge": info}
+
+
+# ─── Chat administrador (agente Hermes) ─────────────────────────────
+
+@app.get("/api/agent/mensagens", dependencies=[Depends(require_auth)])
+def agent_listar_mensagens(
+    operador: str = Query("Gerente"),
+    after_id: int = Query(0, ge=0),
+    limit: int = Query(80, ge=1, le=200),
+):
+    sid = admin_session_id(operador)
+    return {"session_id": sid, "data": agent_store.list_messages(sid, limit=limit, after_id=after_id)}
+
+
+@app.get("/api/agent/briefing", dependencies=[Depends(require_auth)])
+def agent_briefing():
+    b = clinic_briefing()
+    return {"briefing": b, "quick_prompts": QUICK_PROMPTS}
+
+
+@app.post("/api/agent/upload", dependencies=[Depends(require_auth)])
+async def agent_upload(file: UploadFile = File(...)):
+    raw = await file.read()
+    try:
+        meta = save_upload(file.filename or "anexo", raw, file.content_type)
+    except ValueError as e:
+        raise HTTPException(status_code=413, detail=str(e))
+    return {"ok": True, "anexo": json.loads(meta_json(meta))}
+
+
+@app.post("/api/agent/chat", dependencies=[Depends(require_auth)])
+def agent_chat(body: AgentChatBody):
+    sid = admin_session_id(body.operador or "Gerente")
+    text = (body.mensagem or "").strip()
+    anexos = body.anexos_ids or []
+    if not text and not anexos:
+        raise HTTPException(status_code=400, detail="Mensagem ou anexo obrigatório")
+
+    metrics_hint = None
+    if body.incluir_metricas:
+        try:
+            m = get_metricas()
+            b = clinic_briefing()
+            metrics_hint = (
+                f"pacientes={m.get('total_pacientes')} agendamentos_hoje={m.get('agendamentos_hoje')} "
+                f"pendentes={m.get('agendamentos_pendentes')} lembretes_pendentes={m.get('lembretes_pendentes')} "
+                f"lembretes_falhos={m.get('lembretes_falhos')} inativos_120d={b.get('pacientes_sem_retorno_120d')}"
+            )
+        except Exception:
+            metrics_hint = None
+
+    attach_meta: list[dict] = []
+    content_parts: list = []
+    for aid in anexos[:5]:
+        meta = resolve_upload(aid)
+        if not meta:
+            raise HTTPException(status_code=404, detail=f"Anexo {aid} não encontrado")
+        attach_meta.append(json.loads(meta_json(meta)))
+        content_parts.extend(file_to_agent_parts(meta))
+
+    display_user = text or "(anexos enviados)"
+    if attach_meta:
+        names = ", ".join(a["filename"] for a in attach_meta)
+        display_user = f"{display_user}\n📎 {names}".strip()
+
+    agent_store.append(sid, "user", display_user, meta={"anexos": attach_meta} if attach_meta else None)
+    history = agent_store.history_for_llm(sid, max_turns=10)
+    # última msg user já in history via append — remover duplicata se presente
+    if history and history[-1]["role"] == "user":
+        history = history[:-1]
+
+    ok, answer = ask_admin(
+        sid,
+        text,
+        metrics_hint=metrics_hint,
+        history=history,
+        content_parts=content_parts if content_parts else None,
+    )
+    if not ok:
+        raise HTTPException(status_code=502, detail=answer)
+    agent_store.append(sid, "assistant", answer)
+    return {"ok": True, "resposta": answer, "session_id": sid}
 
 
 # ─── Interações (conversa WhatsApp) ─────────────────────────────────
@@ -268,6 +526,57 @@ def listar_lembretes(
 
 
 # ─── Health Check ───────────────────────────────────────────────────
+
+
+
+@app.get("/api/estudantes/mensagens", dependencies=[Depends(require_auth)])
+def estudantes_mensagens(
+    aluno: str = Query("Estudante", max_length=120),
+    after_id: int = Query(0, ge=0),
+    limit: int = Query(120, ge=1, le=200),
+):
+    sid = estudante_session_id(aluno)
+    return {"session_id": sid, "data": agent_store.list_messages(sid, limit=limit, after_id=after_id)}
+
+
+@app.post("/api/estudantes/chat", dependencies=[Depends(require_auth)])
+def estudantes_chat(body: EstudantesChatBody):
+    aluno = (body.aluno or "Estudante").strip() or "Estudante"
+    sid = estudante_session_id(aluno)
+    texto = (body.mensagem or "").strip()
+    attach_meta = []
+    content_parts = []
+    for aid in (body.anexos_ids or [])[:5]:
+        meta = resolve_upload(aid)
+        if not meta:
+            raise HTTPException(404, f"anexo não encontrado: {aid}")
+        attach_meta.append(meta_json(meta))
+        content_parts.extend(file_to_agent_parts(meta))
+    if not texto and not content_parts:
+        raise HTTPException(400, "mensagem ou anexo obrigatório")
+    display_user = texto or "(anexos)"
+    agent_store.append(sid, "user", display_user, meta={"anexos": attach_meta} if attach_meta else None)
+    history = agent_store.history_for_llm(sid, max_turns=10)
+    ok, answer = ask_student(sid, texto, history=history[:-1] if history else None, content_parts=content_parts or None)
+    if not ok:
+        raise HTTPException(502, answer)
+    agent_store.append(sid, "assistant", answer)
+    return {"ok": True, "resposta": answer, "session_id": sid}
+
+
+@app.post("/api/vision/analyze", dependencies=[Depends(require_auth)])
+def vision_analyze(body: VisionAnalyzeBody):
+    op = (body.operador or "Estudante").strip() or "Estudante"
+    sid = vision_session_id(op)
+    ctx = (body.contexto_clinico or "").strip()
+    user_note = ctx or "Análise de imagem (Odonto Vision)"
+    agent_store.append(sid, "user", user_note[:8000])
+    history = agent_store.history_for_llm(sid, max_turns=6)
+    ok, answer = ask_vision(sid, body.imagem_data_url, clinical_context=ctx, history=history[:-1] if history else None)
+    if not ok:
+        raise HTTPException(502, answer)
+    agent_store.append(sid, "assistant", answer)
+    return {"ok": True, "analise": answer, "session_id": sid, "disclaimer": "Análise assistiva educacional — não substitui laudo profissional."}
 
 @app.get("/api/health")
 def health():

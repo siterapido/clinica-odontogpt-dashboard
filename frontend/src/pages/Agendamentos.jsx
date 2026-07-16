@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { CalendarDays, ChevronLeft, ChevronRight, LayoutList } from 'lucide-react'
-import { getAgendamentos, getDentistas, todayISO } from '../api'
+import { CalendarDays, ChevronLeft, ChevronRight, LayoutList, CalendarPlus } from 'lucide-react'
+import { getAgendamentos, getDentistas, getPacientes, todayISO } from '../api'
 import PageHeader from '../components/PageHeader'
+import AgendamentoFormDrawer from '../components/AgendamentoFormDrawer'
 import StatusBadge from '../components/StatusBadge'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
@@ -43,6 +44,9 @@ export default function Agendamentos() {
   const [dentista, setDentista] = useState('')
   const [error, setError] = useState(null)
   const [listPage, setListPage] = useState(0)
+  const [formOpen, setFormOpen] = useState(false)
+  const [editAg, setEditAg] = useState(null)
+  const [pacientes, setPacientes] = useState([])
   const PAGE_SIZE = 20
 
   const weekEnd = useMemo(() => addDays(weekStart, 6), [weekStart])
@@ -67,6 +71,13 @@ export default function Agendamentos() {
   useEffect(() => {
     getDentistas().then(d => setDentistas(d.data || [])).catch(() => {})
   }, [])
+  useEffect(() => {
+    getPacientes({ limit: 300 }).then(d => setPacientes(d.data || [])).catch(() => {})
+  }, [])
+
+  const openNew = () => { setEditAg(null); setFormOpen(true) }
+  const openEdit = (a) => { setEditAg(a); setFormOpen(true) }
+  const onSavedAg = () => { fetchData(); setListPage(0) }
 
   const byDay = useMemo(() => {
     const map = Object.fromEntries(WEEKDAYS.map((_, i) => [fmtISO(addDays(weekStart, i)), []]))
@@ -85,8 +96,15 @@ export default function Agendamentos() {
         title="Agenda"
         subtitle={isMobile ? "Lista de consultas e procedimentos" : "Consultas e procedimentos da semana"}
         action={
-          !isMobile && (
-            <div className="flex gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={openNew}
+              className="inline-flex items-center gap-2 rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white shadow-card hover:bg-accent-hover"
+            >
+              <CalendarPlus size={16} /> Novo
+            </button>
+            {!isMobile && (
               <div className="flex rounded-lg border border-border-subtle bg-surface-2 p-0.5">
                 <button
                   onClick={() => setView('semana')}
@@ -97,8 +115,8 @@ export default function Agendamentos() {
                   className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${view === 'lista' ? 'bg-accent-soft text-accent-deep' : 'text-ink-secondary hover:text-ink'}`}
                 >Lista</button>
               </div>
-            </div>
-          )
+            )}
+          </div>
         }
       />
 
@@ -168,16 +186,17 @@ export default function Agendamentos() {
                     {items.length === 0 ? (
                       <p className="px-1 py-3 text-center text-[10px] text-ink-tertiary">—</p>
                     ) : items.map(a => (
-                      <Link
+                      <button
+                        type="button"
                         key={a.id}
-                        to={`/pacientes/${a.paciente_id}`}
-                        className="block rounded-md border border-border-subtle bg-surface-2 p-2 text-xs transition-all hover:border-accent/40 hover:bg-accent-soft/40"
+                        onClick={() => openEdit(a)}
+                        className="block w-full rounded-md border border-border-subtle bg-surface-2 p-2 text-left text-xs transition-all hover:border-accent/40 hover:bg-accent-soft/40"
                       >
                         <div className="font-semibold text-accent-deep">{a.horario || '—'}</div>
                         <div className="mt-0.5 truncate font-medium text-ink">{a.paciente_nome || `#${a.paciente_id}`}</div>
                         <div className="mt-1 truncate text-[10px] text-ink-secondary">{a.procedimento || a.dentista || '—'}</div>
                         <div className="mt-1.5"><StatusBadge status={a.status} /></div>
-                      </Link>
+                      </button>
                     ))}
                   </div>
                 </div>
@@ -196,13 +215,21 @@ export default function Agendamentos() {
           pageSize={PAGE_SIZE}
           weekStart={fmtISO(weekStart)}
           weekEnd={fmtISO(weekEnd)}
+          onEdit={openEdit}
         />
       )}
+      <AgendamentoFormDrawer
+        open={formOpen}
+        onClose={() => setFormOpen(false)}
+        agendamento={editAg}
+        pacientes={pacientes}
+        onSaved={onSavedAg}
+      />
     </div>
   )
 }
 
-function ListaView({ status, dentista, page, setPage, pageSize, weekStart, weekEnd }) {
+function ListaView({ status, dentista, page, setPage, pageSize, weekStart, weekEnd, onEdit }) {
   const [items, setItems] = useState(null)
   const [error, setError] = useState(null)
   useEffect(() => {
@@ -230,11 +257,12 @@ function ListaView({ status, dentista, page, setPage, pageSize, weekStart, weekE
                 <th className="px-6 py-3">Dentista</th>
                 <th className="px-6 py-3">Procedimento</th>
                 <th className="px-6 py-3">Status</th>
+                <th className="px-6 py-3"></th>
               </tr>
             </thead>
             <tbody>
               {items.data.length === 0 ? (
-                <tr><td colSpan="6"><EmptyState icon={LayoutList} title="Nenhum agendamento" description="Ajuste os filtros para ver mais resultados." /></td></tr>
+                <tr><td colSpan="7"><EmptyState icon={LayoutList} title="Nenhum agendamento" description="Ajuste os filtros para ver mais resultados." /></td></tr>
               ) : items.data.map(a => (
                 <tr key={a.id} className="border-t border-border-subtle transition-colors hover:bg-surface-1">
                   <td className="px-6 py-3 font-medium text-ink">
@@ -247,6 +275,9 @@ function ListaView({ status, dentista, page, setPage, pageSize, weekStart, weekE
                   <td className="px-6 py-3 text-ink-secondary">{a.dentista || '—'}</td>
                   <td className="px-6 py-3 text-ink-secondary">{a.procedimento || '—'}</td>
                   <td className="px-6 py-3"><StatusBadge status={a.status} /></td>
+                  <td className="px-6 py-3 text-right">
+                    <button type="button" onClick={() => onEdit?.(a)} className="text-xs font-medium text-accent-hover hover:text-accent-deep">Editar</button>
+                  </td>
                 </tr>
               ))}
             </tbody>

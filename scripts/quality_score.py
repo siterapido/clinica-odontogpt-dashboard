@@ -10,7 +10,7 @@ import urllib.request
 
 ROOT = "/root/clinica-odontogpt-dashboard"
 SCORE = 0
-MAX = 1000
+MAX = 1110
 NOTES: list[str] = []
 
 
@@ -27,6 +27,27 @@ def http_ok(url: str) -> bool:
     try:
         with urllib.request.urlopen(url, timeout=8) as r:
             return 200 <= r.status < 300
+    except Exception:
+        return False
+
+
+def _http_json_ok(url: str, auth: bool = False) -> bool:
+    try:
+        headers = {}
+        if auth:
+            pw = os.environ.get("ODONTOGPT_DASH_PASSWORD", "odontogpt2026")
+            data = json.dumps({"password": pw}).encode()
+            req = urllib.request.Request(
+                "http://127.0.0.1:8001/api/login",
+                data=data,
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as r:
+                tok = json.loads(r.read())["token"]
+            headers["Authorization"] = f"Bearer {tok}"
+        req2 = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req2, timeout=12) as r2:
+            return 200 <= r2.status < 300
     except Exception:
         return False
 
@@ -63,6 +84,9 @@ def main() -> int:
     add(60, file_exists(f"{ROOT}/backend/agent_store.py"), "Histórico admin SQLite")
     add(60, file_exists(f"{ROOT}/frontend/src/pages/Conversas.jsx"), "UI chat atendente")
     add(80, file_exists(f"{ROOT}/frontend/src/pages/AgenteAdmin.jsx"), "UI chat administrador")
+    add(40, file_exists(f"{ROOT}/backend/insights_service.py"), "Insights briefing clínica")
+    add(40, file_exists(f"{ROOT}/backend/media_service.py"), "Upload multimodal assistente")
+    add(30, _http_json_ok("http://127.0.0.1:8001/api/agent/briefing", auth=True), "API agent briefing")
     add(40, file_exists("/root/.hermes-docker/profiles/odonto-gpt/skills/odonto_crm/SKILL.md"), "Skill odonto_crm")
     add(40, file_exists("/root/.hermes-docker/profiles/odonto-gpt/scripts/odonto_crm_mcp.py"), "MCP odonto-crm")
     add(50, http_ok("http://127.0.0.1:8001/api/health"), "Backend :8001 health")
