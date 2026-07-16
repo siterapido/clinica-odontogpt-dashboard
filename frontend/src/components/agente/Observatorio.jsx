@@ -9,6 +9,26 @@ function Stat({ label, value, warn }) {
   )
 }
 
+function KpiChip({ label, value, warn, onClick, disabled }) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={`rounded-full border px-2.5 py-1 text-left transition disabled:opacity-50 ${
+        warn
+          ? 'border-warning/40 bg-warning/15 text-ink hover:bg-warning/25'
+          : 'border-accent/25 bg-accent/10 text-ink hover:bg-accent/20'
+      }`}
+    >
+      <span className="block text-[9px] font-medium uppercase tracking-wide text-ink-tertiary">
+        {label}
+      </span>
+      <span className="block text-[12px] font-semibold text-ink">{value}</span>
+    </button>
+  )
+}
+
 function formatUpdatedAt(updatedAt) {
   if (!updatedAt) return null
   if (updatedAt instanceof Date) {
@@ -22,12 +42,23 @@ function formatUpdatedAt(updatedAt) {
   return null
 }
 
+function formatPct(v) {
+  if (v == null || Number.isNaN(Number(v))) return '—'
+  const n = Number(v)
+  return `${Number.isInteger(n) ? n : n.toFixed(1)}%`
+}
+
 export default function Observatorio({ briefing, quickPrompts, onPrompt, sending, updatedAt }) {
   const b = briefing || {}
+  const anti = b.anti_noshow || {}
   const fire = (p) => {
     if (typeof onPrompt === 'function') onPrompt(p)
   }
   const updatedLabel = formatUpdatedAt(updatedAt)
+  const confPct = anti.taxa_confirmacao_pct
+  const noShowPct = anti.taxa_no_show_pct
+  const esperaAtivos = anti.lista_espera_ativos ?? 0
+  const esperaOfertados = anti.lista_espera_ofertados_7d ?? 0
 
   return (
     <div className="flex flex-col gap-3">
@@ -41,6 +72,33 @@ export default function Observatorio({ briefing, quickPrompts, onPrompt, sending
             Atualizado às {updatedLabel}
           </p>
         )}
+        <div className="mb-3 flex flex-wrap gap-1.5" data-testid="anti-noshow-chips">
+          <KpiChip
+            label="Confirmação 7d"
+            value={formatPct(confPct)}
+            disabled={sending}
+            onClick={() =>
+              fire('Como está nossa taxa de confirmação e no-show nos últimos 7 dias?')
+            }
+          />
+          <KpiChip
+            label="No-show 7d"
+            value={formatPct(noShowPct)}
+            warn={Number(noShowPct) >= 15}
+            disabled={sending}
+            onClick={() =>
+              fire('Como está nossa taxa de confirmação e no-show nos últimos 7 dias?')
+            }
+          />
+          <KpiChip
+            label="Lista espera"
+            value={`${esperaAtivos} ativos · ${esperaOfertados} ofertados`}
+            disabled={sending}
+            onClick={() =>
+              fire('Quem está na lista de espera ativa e o que ofertar hoje?')
+            }
+          />
+        </div>
         <dl className="grid grid-cols-2 gap-2 text-xs">
           <Stat label="Consultas hoje" value={b.agendamentos_hoje} />
           <Stat label="Confirmadas" value={b.confirmados_hoje} />

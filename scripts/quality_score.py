@@ -10,7 +10,7 @@ import urllib.request
 
 ROOT = "/root/clinica-odontogpt-dashboard"
 SCORE = 0
-MAX = 1110
+MAX = 1130  # +20 anti_noshow KPIs no briefing
 NOTES: list[str] = []
 
 
@@ -88,6 +88,43 @@ def main() -> int:
     add(40, file_exists(f"{ROOT}/backend/media_service.py"), "Upload multimodal assistente")
     add(30, _http_json_ok("http://127.0.0.1:8001/api/agent/briefing", auth=True), "API agent briefing")
     add(20, _http_json_ok("http://127.0.0.1:8001/api/agent/preferencias?operador=Gerente", auth=True), "API agent preferencias")
+
+    def _anti_noshow_kpis_ok() -> bool:
+        """+20 se briefing expõe bloco anti_noshow com chaves de KPI."""
+        try:
+            pw = os.environ.get("ODONTOGPT_DASH_PASSWORD", "odontogpt2026")
+            data = json.dumps({"password": pw}).encode()
+            req = urllib.request.Request(
+                "http://127.0.0.1:8001/api/login",
+                data=data,
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as r:
+                tok = json.loads(r.read())["token"]
+            req2 = urllib.request.Request(
+                "http://127.0.0.1:8001/api/agent/briefing",
+                headers={"Authorization": f"Bearer {tok}"},
+            )
+            with urllib.request.urlopen(req2, timeout=12) as r2:
+                body = json.loads(r2.read())
+            anti = (body.get("briefing") or {}).get("anti_noshow") or {}
+            required = {
+                "agendados_7d",
+                "confirmados_7d",
+                "taxa_confirmacao_pct",
+                "no_show_7d",
+                "taxa_no_show_pct",
+                "lembretes_enviados_7d",
+                "lembretes_falhos_7d",
+                "lista_espera_ativos",
+                "lista_espera_ofertados_7d",
+                "lista_espera_convertidos_7d",
+            }
+            return required.issubset(anti.keys())
+        except Exception:
+            return False
+
+    add(20, _anti_noshow_kpis_ok(), "API briefing anti_noshow KPIs")
     add(40, file_exists("/root/.hermes-docker/profiles/odonto-gpt/skills/odonto_crm/SKILL.md"), "Skill odonto_crm")
     add(40, file_exists("/root/.hermes-docker/profiles/odonto-gpt/scripts/odonto_crm_mcp.py"), "MCP odonto-crm")
     add(50, http_ok("http://127.0.0.1:8001/api/health"), "Backend :8001 health")
