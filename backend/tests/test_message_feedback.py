@@ -77,3 +77,22 @@ def test_listar_mensagens_inclui_feedback(crm_db):
     assert bot["feedback"]["nota"] == 5
     envio = next(m for m in msgs if m["id"] == 10)
     assert envio.get("feedback") is None
+
+
+def test_set_feedback_rewrite(crm_db):
+    chat_store.upsert_message_feedback(11, nota=2, comentario="melhorar")
+    fb = chat_store.set_feedback_rewrite(11, "Oi! Posso te oferecer amanhã às 10h?")
+    assert "10h" in (fb.get("reescrita_texto") or "")
+    assert fb.get("reescrita_em")
+
+
+def test_salvar_rascunho_origem_feedback(crm_db):
+    # ensure session exists via set_modo or salvar
+    chat_store.set_modo("5584991111111", "bot", None)
+    sess = chat_store.salvar_rascunho(
+        "5584991111111",
+        "Texto reescrito para o paciente",
+        origem="feedback",
+    )
+    assert sess.get("rascunho_resposta")
+    assert sess.get("rascunho_origem") == "feedback"

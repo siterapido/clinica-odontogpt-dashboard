@@ -698,7 +698,7 @@ def salvar_rascunho(
     msg = (mensagem or "").strip()
     if not msg:
         raise ValueError("rascunho vazio")
-    if origem not in ("humano", "agente", "sistema"):
+    if origem not in ("humano", "agente", "sistema", "feedback"):
         origem = "humano"
     now = _now_sql()
     with _rw() as c:
@@ -1136,6 +1136,25 @@ def upsert_message_feedback(
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (int(interacao_id), phone, n, com, op, now, now),
             )
+    return get_message_feedback(interacao_id)  # type: ignore[return-value]
+
+
+def set_feedback_rewrite(interacao_id: int, texto: str) -> dict:
+    ensure_schema()
+    t = (texto or "").strip()[:4000]
+    if not t:
+        raise ValueError("reescrita vazia")
+    fb = get_message_feedback(interacao_id)
+    if not fb:
+        raise ValueError("salve o feedback antes de reescrever")
+    now = _now_sql()
+    with _rw() as c:
+        c.execute(
+            """UPDATE message_feedback SET
+                 reescrita_texto = ?, reescrita_em = ?, updated_at = ?
+               WHERE interacao_id = ?""",
+            (t, now, now, int(interacao_id)),
+        )
     return get_message_feedback(interacao_id)  # type: ignore[return-value]
 
 
