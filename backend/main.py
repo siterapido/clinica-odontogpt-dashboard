@@ -1316,7 +1316,8 @@ def chat_reescrever_mensagem(interacao_id: int, body: MessageRewriteBody):
             raise HTTPException(status_code=400, detail="salve a nota antes de reescrever")
 
         phone = inter.get("telefone") or ""
-        hist_rows = chat_store.listar_mensagens(phone, limit=24, after_id=0)
+        # listar_mensagens is ASC; take the most recent turns for rewrite context
+        hist_rows = chat_store.listar_mensagens(phone, limit=200, after_id=0)[-24:]
         history = []
         for h in hist_rows:
             if h.get("tipo") == "envio":
