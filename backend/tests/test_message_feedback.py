@@ -56,6 +56,22 @@ def test_upsert_feedback_1_a_5(crm_db):
     assert chat_store.get_message_feedback(11)["nota"] == 2
 
 
+def test_upsert_nota_only_preserves_comentario(crm_db):
+    """UPDATE with comentario=None must not wipe existing comment (I1)."""
+    chat_store.upsert_message_feedback(11, nota=4, comentario="Bom tom", operador="Gerente")
+    fb = chat_store.upsert_message_feedback(11, nota=5)  # nota only
+    assert fb["nota"] == 5
+    assert fb["comentario"] == "Bom tom"
+    assert fb["operador"] == "Gerente"
+    # Explicit empty string clears comment
+    fb2 = chat_store.upsert_message_feedback(11, nota=5, comentario="")
+    assert fb2["comentario"] is None
+    # Re-set and confirm insert path accepts None
+    chat_store.upsert_message_feedback(11, nota=3, comentario="de novo")
+    fb3 = chat_store.upsert_message_feedback(11, nota=1, comentario=None)
+    assert fb3["comentario"] == "de novo"
+
+
 def test_reject_nota_invalida(crm_db):
     with pytest.raises(ValueError):
         chat_store.upsert_message_feedback(11, nota=0)

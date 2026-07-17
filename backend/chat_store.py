@@ -1114,7 +1114,9 @@ def upsert_message_feedback(
     if not phone:
         raise ValueError("telefone inválido na mensagem")
     now = _now_sql()
-    com = (comentario or "").strip()[:2000] or None
+    # None = leave comentario unchanged on UPDATE; on INSERT store NULL.
+    # Explicit str (incl. "") → strip[:2000] or NULL if empty.
+    com = (comentario.strip()[:2000] or None) if comentario is not None else None
     op = (operador or "").strip()[:120] or None
     with _rw() as c:
         existing = c.execute(
@@ -1122,13 +1124,22 @@ def upsert_message_feedback(
             (int(interacao_id),),
         ).fetchone()
         if existing:
-            c.execute(
-                """UPDATE message_feedback SET
-                     nota = ?, comentario = ?, operador = COALESCE(?, operador),
-                     updated_at = ?
-                   WHERE interacao_id = ?""",
-                (n, com, op, now, int(interacao_id)),
-            )
+            if comentario is not None:
+                c.execute(
+                    """UPDATE message_feedback SET
+                         nota = ?, comentario = ?, operador = COALESCE(?, operador),
+                         updated_at = ?
+                       WHERE interacao_id = ?""",
+                    (n, com, op, now, int(interacao_id)),
+                )
+            else:
+                c.execute(
+                    """UPDATE message_feedback SET
+                         nota = ?, operador = COALESCE(?, operador),
+                         updated_at = ?
+                       WHERE interacao_id = ?""",
+                    (n, op, now, int(interacao_id)),
+                )
         else:
             c.execute(
                 """INSERT INTO message_feedback

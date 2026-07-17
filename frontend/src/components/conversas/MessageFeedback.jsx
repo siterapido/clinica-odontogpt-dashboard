@@ -57,15 +57,15 @@ export default function MessageFeedback({
 
   async function handleRewrite() {
     if (!messageId || rewriting) return
-    if (!nota && !comentario.trim()) {
-      setErr('Dê uma nota ou escreva um comentário')
+    if (!(nota >= 1)) {
+      setErr('Dê uma nota (1–5) antes de reescrever')
       return
     }
     setRewriting(true)
     setErr(null)
     try {
       const res = await reescreverMensagem(messageId, {
-        nota: nota || undefined,
+        nota,
         comentario: comentario || undefined,
       })
       if (res.feedback) onFeedbackChange?.(res.feedback)
@@ -116,7 +116,7 @@ export default function MessageFeedback({
         size="sm"
         variant="outline"
         className="h-7 gap-1 text-[11px]"
-        disabled={disabled || rewriting || (!nota && !comentario.trim())}
+        disabled={disabled || rewriting || !(nota >= 1)}
         onClick={handleRewrite}
       >
         <RefreshCw size={12} className={rewriting ? 'animate-spin' : ''} />

@@ -26,7 +26,7 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import EmptyState from '../EmptyState'
 import LeadScorePicker, { LeadScoreBadge } from './LeadScorePicker'
-import MessageFeedback from './MessageFeedback'
+import MessageFeedback, { isBotReplyMessage } from './MessageFeedback'
 
 function formatTel(t) {
   if (!t || t.length < 12) return t
@@ -490,7 +490,7 @@ export default function ChatPaneCRM({
           <div className="flex-1 space-y-2.5 overflow-y-auto bg-[linear-gradient(180deg,var(--color-surface)_0%,var(--color-surface-2)_48%)] px-3 py-3">
             {msgs.map(m => {
               const out = m.tipo === 'reply'
-              const atend = m.classificacao?.startsWith('atendente:')
+              const isBot = isBotReplyMessage(m)
               return (
                 <div key={m.id} className={`flex ${out ? 'justify-end' : 'justify-start'} gap-2`}>
                   {!out && (
@@ -506,10 +506,10 @@ export default function ChatPaneCRM({
                     <p className="whitespace-pre-wrap break-words">{m.mensagem}</p>
                     <p className={`mt-1 text-[10px] ${out ? 'text-white/65' : 'text-ink-tertiary'}`}>
                       {formatTime(m.created_at)}
-                      {atend && ` · ${m.classificacao.replace('atendente:', '')}`}
-                      {!atend && out && ' · OdontoGPT'}
+                      {out && !isBot && ` · ${(m.classificacao || '').replace(/^atendente:/i, '')}`}
+                      {isBot && ' · OdontoGPT'}
                     </p>
-                    {out && !atend && typeof m.id === 'number' && (
+                    {isBot && typeof m.id === 'number' && (
                       <div className="mt-2 rounded-lg bg-white/95 p-2 text-left text-ink shadow-sm">
                         <MessageFeedback
                           messageId={m.id}
