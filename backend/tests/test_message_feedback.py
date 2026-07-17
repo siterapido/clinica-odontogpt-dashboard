@@ -96,3 +96,27 @@ def test_salvar_rascunho_origem_feedback(crm_db):
     )
     assert sess.get("rascunho_resposta")
     assert sess.get("rascunho_origem") == "feedback"
+
+
+def test_rewrite_strips_crm_tags(crm_db, monkeypatch):
+    import patient_atendimento as pa
+
+    def fake_post(messages, session_key):
+        return True, "Claro! Temos 10h amanhã.\n:::crm stage stage=agendamento:::"
+
+    monkeypatch.setattr(
+        "hermes_agent_client._post_chat",
+        fake_post,
+    )
+    # if rewrite imports _post_chat differently, patch the symbol used inside patient_atendimento
+    monkeypatch.setattr(pa, "_post_chat_for_rewrite", fake_post, raising=False)
+
+    ok, text = pa.rewrite_patient_reply(
+        original="Ok.",
+        nota=2,
+        comentario="Ofereça horário",
+        history=[{"role": "user", "content": "Quero limpeza"}],
+    )
+    assert ok
+    assert ":::crm" not in text
+    assert "10h" in text
