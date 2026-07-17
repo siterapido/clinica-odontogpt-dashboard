@@ -120,3 +120,27 @@ def test_rewrite_strips_crm_tags(crm_db, monkeypatch):
     assert ok
     assert ":::crm" not in text
     assert "10h" in text
+
+
+def test_apply_rewrite_simulador(crm_db):
+    chat_store.ensure_test_paciente()
+    rid = chat_store.registrar_mensagem(
+        chat_store.TEST_CHAT_PHONE, "reply", "Oi genérico", "teste:bot"
+    )
+    chat_store.upsert_message_feedback(rid, nota=2, comentario="mais calor")
+    out = chat_store.apply_message_rewrite(
+        rid, "Oi! Que bom te ver por aqui 😊 Quer marcar uma avaliação?"
+    )
+    assert out["destino"] == "thread"
+    assert out.get("reply_id")
+    msgs = chat_store.listar_mensagens(chat_store.TEST_CHAT_PHONE)
+    assert any(m.get("classificacao") == "teste:reescrita" for m in msgs)
+
+
+def test_apply_rewrite_crm_rascunho(crm_db):
+    chat_store.upsert_message_feedback(11, nota=2, comentario="x")
+    out = chat_store.apply_message_rewrite(11, "Versão melhor para o paciente")
+    assert out["destino"] == "rascunho"
+    sess = chat_store.get_modo("5584991111111")
+    assert sess.get("rascunho_resposta") == "Versão melhor para o paciente"
+    assert sess.get("rascunho_origem") == "feedback"

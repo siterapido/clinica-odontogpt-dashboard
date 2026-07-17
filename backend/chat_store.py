@@ -1158,6 +1158,46 @@ def set_feedback_rewrite(interacao_id: int, texto: str) -> dict:
     return get_message_feedback(interacao_id)  # type: ignore[return-value]
 
 
+def apply_message_rewrite(interacao_id: int, texto: str) -> dict[str, Any]:
+    """Persists rewrite. Assumes texto already generated.
+    Returns {feedback, texto, destino, reply_id?}.
+    Simulador (TEST_CHAT_PHONE) → thread with teste:reescrita;
+    CRM phone → rascunho origem feedback (never WhatsApp send).
+    """
+    inter = get_interacao(interacao_id)
+    if not inter or not is_bot_reply(inter):
+        raise ValueError("mensagem inválida")
+    phone = normalize_phone(inter.get("telefone") or "")
+    fb = set_feedback_rewrite(interacao_id, texto)
+    if phone == TEST_CHAT_PHONE:
+        reply_id = registrar_mensagem(
+            phone, "reply", texto, classificacao="teste:reescrita"
+        )
+        return {
+            "feedback": fb,
+            "texto": texto,
+            "destino": "thread",
+            "reply_id": reply_id,
+        }
+    salvar_rascunho(phone, texto, origem="feedback")
+    try:
+        registrar_evento(
+            phone,
+            tipo="feedback_rewrite",
+            titulo="Reescrita por feedback",
+            detalhe=f"interacao_id={interacao_id}",
+            meta={"interacao_id": interacao_id, "nota": fb.get("nota")},
+        )
+    except Exception:
+        pass
+    return {
+        "feedback": get_message_feedback(interacao_id),
+        "texto": texto,
+        "destino": "rascunho",
+        "reply_id": None,
+    }
+
+
 def ensure_test_paciente() -> int:
     """Garante paciente + sessão do chat de teste no CRM."""
     ensure_schema()

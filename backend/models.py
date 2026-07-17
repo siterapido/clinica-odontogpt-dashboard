@@ -3,11 +3,16 @@ from typing import Optional
 
 
 class LoginRequest(BaseModel):
+    """Login Supabase: email + password. Campo password-only só com legacy flag."""
+    email: Optional[str] = None
     password: str
 
 
 class LoginResponse(BaseModel):
     token: str
+    refresh_token: Optional[str] = None
+    expires_in: Optional[int] = None
+    user: Optional[dict] = None
 
 
 class PacienteCreate(BaseModel):
@@ -76,9 +81,55 @@ class ChatAssumirBody(BaseModel):
     atendente: str = Field(..., min_length=1, max_length=120)
 
 
+class ChatCrmBody(BaseModel):
+    """Atualização do card CRM (kanban WhatsApp)."""
+    stage: Optional[str] = Field(None, max_length=40)
+    prioridade: Optional[str] = Field(None, max_length=20)
+    notas_crm: Optional[str] = Field(None, max_length=2000)
+    tags: Optional[list[str]] = None
+    clear_notas: bool = False
+    lead_score: Optional[int] = Field(None, ge=1, le=5)
+    script_fluxo: Optional[str] = Field(None, max_length=40)
+    script_passo: Optional[int] = Field(None, ge=0, le=20)
+    clear_script: bool = False
+
+
+class ChatFollowupBody(BaseModel):
+    titulo: str = Field(..., min_length=1, max_length=200)
+    descricao: Optional[str] = Field(None, max_length=1000)
+    tipo: Optional[str] = Field("manual", max_length=40)
+    due_hours: Optional[int] = Field(24, ge=1, le=720)
+
+
+class ChatFollowupStatusBody(BaseModel):
+    status: str = Field(..., max_length=20)
+
+
+class ChatRascunhoBody(BaseModel):
+    """HITL: rascunho de resposta WhatsApp (humano ou agente)."""
+    mensagem: str = Field(..., min_length=1, max_length=4000)
+    origem: Optional[str] = Field("humano", max_length=40)
+
+
+class ChatAprovarRascunhoBody(BaseModel):
+    """Aprova rascunho e envia no WhatsApp (opcionalmente editado)."""
+    atendente: Optional[str] = Field(None, max_length=120)
+    mensagem: Optional[str] = Field(None, max_length=4000)  # se omitido, usa rascunho salvo
+
+
 class ChatTesteBody(BaseModel):
     """Mensagem como se fosse o paciente (simulador)."""
     mensagem: str = Field(..., min_length=1, max_length=4000)
+
+
+class MessageFeedbackBody(BaseModel):
+    nota: int = Field(..., ge=1, le=5)
+    comentario: Optional[str] = Field(None, max_length=2000)
+
+
+class MessageRewriteBody(BaseModel):
+    nota: Optional[int] = Field(None, ge=1, le=5)
+    comentario: Optional[str] = Field(None, max_length=2000)
 
 
 class DentistaHorarioItem(BaseModel):
@@ -110,6 +161,64 @@ class DentistaUpdateBody(BaseModel):
     ativo: Optional[bool] = None
     observacoes: Optional[str] = Field(None, max_length=2000)
     horarios: Optional[list[DentistaHorarioItem]] = None
+
+
+class ClinicaMarcaBody(BaseModel):
+    """Identidade visual + tom de voz da clínica."""
+    cor_primaria: Optional[str] = Field(None, max_length=7)
+    cor_secundaria: Optional[str] = Field(None, max_length=7)
+    cor_fundo: Optional[str] = Field(None, max_length=7)
+    cor_texto: Optional[str] = Field(None, max_length=7)
+    fonte_titulo: Optional[str] = Field(None, max_length=40)
+    fonte_corpo: Optional[str] = Field(None, max_length=40)
+    assinatura_rodape: Optional[str] = Field(None, max_length=300)
+    disclaimer_legal: Optional[str] = Field(None, max_length=800)
+    tom_marca: Optional[str] = Field(None, max_length=40)
+    tratamento: Optional[str] = Field(None, max_length=20)
+    nivel_formalidade: Optional[int] = Field(None, ge=1, le=5)
+    # Aceita lista ou string ("a, b" / linhas) — o store normaliza
+    palavras_evitar: Optional[list[str] | str] = None
+    frases_assinatura: Optional[list[str] | str] = None
+    instrucoes_voz: Optional[str] = Field(None, max_length=1500)
+    clear_logo: Optional[bool] = None
+
+
+class EntregavelCreateBody(BaseModel):
+    tipo: str = Field(..., min_length=2, max_length=40)
+    titulo: str = Field(..., min_length=1, max_length=200)
+    corpo_md: str = Field(..., min_length=1, max_length=80000)
+    operador: Optional[str] = Field("Gerente", max_length=120)
+    origem: Optional[str] = Field("manual", max_length=40)
+    meta: Optional[dict] = None
+
+
+class EntregavelUpdateBody(BaseModel):
+    status: Optional[str] = Field(None, max_length=20)
+    titulo: Optional[str] = Field(None, max_length=200)
+
+
+class EntregavelNovaVersaoBody(BaseModel):
+    corpo_md: str = Field(..., min_length=1, max_length=80000)
+    titulo: Optional[str] = Field(None, max_length=200)
+    operador: Optional[str] = Field("Gerente", max_length=120)
+
+
+class EntregavelExportBody(BaseModel):
+    """Exportação ad-hoc (chat sem id de biblioteca) em PDF/DOCX."""
+    titulo: str = Field(..., min_length=1, max_length=200)
+    corpo_md: str = Field(..., min_length=1, max_length=80000)
+    tipo: Optional[str] = Field("relatorio_executivo", max_length=40)
+    fmt: str = Field("pdf", max_length=10)
+
+
+class EntregavelPreviewBody(BaseModel):
+    """Preview HTML ad-hoc (chat sem id de biblioteca)."""
+    titulo: str = Field(..., min_length=1, max_length=200)
+    corpo_md: str = Field(..., min_length=1, max_length=80000)
+    tipo: Optional[str] = Field("relatorio_executivo", max_length=40)
+    tipo_label: Optional[str] = Field(None, max_length=80)
+    versao: Optional[int] = None
+    created_at: Optional[str] = Field(None, max_length=40)
 
 
 class ClinicaBody(BaseModel):
@@ -146,11 +255,49 @@ class AgentChatBody(BaseModel):
     anexos_ids: Optional[list[str]] = Field(default=None, max_length=5)
 
 
+class MemoryNoteBody(BaseModel):
+    titulo: Optional[str] = Field(None, max_length=200)
+    conteudo: str = Field(..., min_length=1, max_length=50000)
+    tipo: str = Field("nota", max_length=40)
+    tags: Optional[list[str]] = None
+
+
 class AgentPreferenciasBody(BaseModel):
     operador: Optional[str] = Field("Gerente", max_length=120)
     nome_agente: str = Field("OdontoGPT", min_length=1, max_length=80)
     tom: str = Field("acolhedor", max_length=40)
     habilidades: Optional[dict[str, bool]] = None
+
+
+class TarefaCreateBody(BaseModel):
+    operador: Optional[str] = Field("Gerente", max_length=120)
+    titulo: str = Field(..., min_length=1, max_length=200)
+    descricao: Optional[str] = Field(None, max_length=2000)
+    prioridade: Optional[str] = Field("media", max_length=20)
+    rotina_id: Optional[str] = Field(None, max_length=80)
+    prompt: Optional[str] = Field(None, max_length=4000)
+    due_at: Optional[str] = Field(None, max_length=32)
+
+
+class TarefaUpdateBody(BaseModel):
+    status: Optional[str] = Field(None, max_length=20)
+    titulo: Optional[str] = Field(None, max_length=200)
+    descricao: Optional[str] = Field(None, max_length=2000)
+    prioridade: Optional[str] = Field(None, max_length=20)
+
+
+class TarefaFromRotinaBody(BaseModel):
+    operador: Optional[str] = Field("Gerente", max_length=120)
+    rotina_id: str = Field(..., min_length=1, max_length=80)
+
+
+class RotinaProgramadaBody(BaseModel):
+    operador: Optional[str] = Field("Gerente", max_length=120)
+    rotina_id: str = Field(..., min_length=1, max_length=80)
+    schedule: str = Field("diario", max_length=20)  # manual|diario|semanal|uteis
+    hora: str = Field("08:00", max_length=5)
+    weekday: Optional[int] = Field(None, ge=0, le=6)
+    ativo: bool = True
 
 
 class EstudantesChatBody(BaseModel):

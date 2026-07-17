@@ -1,10 +1,61 @@
-from fastapi import FastAPI, Query, HTTPException, Depends, Header, UploadFile, File
+from fastapi import FastAPI, Query, HTTPException, Depends, Header, UploadFile, File, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse, Response
 from typing import Optional
 from pathlib import Path
+import asyncio
 import json
+import os
+
+
+def _load_dotenv_file() -> None:
+    """Garante .env no processo (systemd EnvironmentFile às vezes não exporta JWTs)."""
+    base = Path(__file__).resolve().parent
+    prefer = {
+        "SUPABASE_URL",
+        "SUPABASE_ANON_KEY",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "CLINIC_LOGIN_EMAIL",
+        "CLINIC_LOGIN_PASSWORD",
+        "EVOLUTION_API_KEY",
+        "EVOLUTION_INSTANCE",
+        "EVOLUTION_API_URL",
+        "CHAT_BRIDGE_TOKEN",
+    }
+    for name in (".env", ".env.evolution"):
+        env_path = base / name
+        if not env_path.is_file():
+            continue
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip().strip("'").strip('"')
+            if not key:
+                continue
+            if key not in os.environ:
+                os.environ[key] = val
+            elif key in prefer:
+                os.environ[key] = val
+
+
+_load_dotenv_file()
+
 from database import query, query_one
-from auth import require_auth, create_token, revoke_token, DASH_PASSWORD
+from auth import require_auth, revoke_token, login_email_password, login_legacy_password
+import auth as auth_module
+from starlette.middleware.base import BaseHTTPMiddleware
+
+# rebind supabase config after dotenv (auth lê env no import)
+auth_module.SUPABASE_URL = (
+    os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL") or ""
+).rstrip("/")
+auth_module.SUPABASE_ANON_KEY = (
+    os.getenv("SUPABASE_ANON_KEY") or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY") or ""
+)
+auth_module.SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or ""
 from models import (
     LoginRequest,
     LoginResponse,
@@ -16,12 +67,30 @@ from models import (
     ProntuarioUpdate,
     ChatEnviarBody,
     ChatAssumirBody,
+    ChatCrmBody,
+    ChatRascunhoBody,
+    ChatAprovarRascunhoBody,
+    ChatFollowupBody,
+    ChatFollowupStatusBody,
     ChatTesteBody,
+    MessageFeedbackBody,
+    MessageRewriteBody,
     ClinicaBody,
+    ClinicaMarcaBody,
+    EntregavelCreateBody,
+    EntregavelUpdateBody,
+    EntregavelNovaVersaoBody,
+    EntregavelExportBody,
+    EntregavelPreviewBody,
     DentistaBody,
     DentistaUpdateBody,
     AgentChatBody,
     AgentPreferenciasBody,
+    MemoryNoteBody,
+    TarefaCreateBody,
+    TarefaUpdateBody,
+    TarefaFromRotinaBody,
+    RotinaProgramadaBody,
     EstudantesChatBody,
     VisionAnalyzeBody,
     OrcamentoCreateBody,
@@ -39,10 +108,14 @@ import chat_store
 from bridge_client import send_text as bridge_send_text
 from chat_store import normalize_phone, TEST_CHAT_PHONE, TEST_CHAT_NOME
 import agent_store
+import tarefas_store
 import clinic_config
 import dentistas_store
+import brand_store
+import entregaveis_store
 from hermes_agent_client import (
     ask_admin,
+    ask_admin_stream,
     admin_session_id,
     ask_student,
     ask_vision,
@@ -51,19 +124,42 @@ from hermes_agent_client import (
     estudante_session_id,
     vision_session_id,
 )
-from insights_service import clinic_briefing, QUICK_PROMPTS
+from insights_service import clinic_briefing, QUICK_PROMPTS, agent_operational_snapshot
+from dashboard_service import build_cockpit
 import media_service
 from media_service import save_upload, resolve_upload, file_to_agent_parts, meta_json
+import memory_service
 
 app = FastAPI(title="OdontoGPT Dashboard API", version="2.0.0")
 
 
 @app.on_event("startup")
 def _startup_chat_schema():
+    # Multi-tenant: bootstrap SQLite local + push canônico Supabase
+    try:
+        import clinic_sync
+
+        boot = clinic_sync.bootstrap_clinic()
+        print(f"[startup] clinic bootstrap: {boot.get('ok')} local={boot.get('local_db')}")
+    except Exception as e:
+        print(f"[startup] clinic bootstrap skipped: {e}")
+
     chat_store.ensure_schema()
     agent_store.ensure_schema()
     try:
+        tarefas_store.ensure_schema()
+    except Exception:
+        pass
+    try:
         clinic_config.ensure_schema()
+    except Exception:
+        pass
+    try:
+        brand_store.ensure_schema()
+    except Exception:
+        pass
+    try:
+        entregaveis_store.ensure_schema()
     except Exception:
         pass
     try:
@@ -71,32 +167,142 @@ def _startup_chat_schema():
     except Exception:
         pass
     try:
+        memory_service.ensure_schema()
+    except Exception:
+        pass
+    try:
         chat_store.ensure_test_paciente()
     except Exception:
         pass
 
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Headers de segurança básicos (skill security-audit / defense in depth)."""
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault(
+            "Permissions-Policy", "camera=(), microphone=(), geolocation=()"
+        )
+        response.headers.setdefault("Cache-Control", "no-store")
+        return response
+
+
+# CORS: em produção preferir clinica.odontogpt.com; * mantido se painel for servido same-origin via Caddy
+_cors_origins = [
+    o.strip()
+    for o in __import__("os").environ.get(
+        "CORS_ALLOW_ORIGINS",
+        "https://clinica.odontogpt.com,https://estudante.odontogpt.com,http://localhost:5173,http://127.0.0.1:5173",
+    ).split(",")
+    if o.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_cors_origins,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
 )
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 # ─── Autenticação ───────────────────────────────────────────────────
 
 @app.post("/api/login", response_model=LoginResponse)
-def login(body: LoginRequest):
-    if not body.password or body.password != DASH_PASSWORD:
-        raise HTTPException(status_code=401, detail="Senha incorreta")
-    return {"token": create_token()}
+def login(body: LoginRequest, request: Request):
+    """Login via Supabase Auth (e-mail + senha). Exige membership em clínica.
+
+    Autorização: clinic_members + profiles (nunca user_metadata).
+    """
+    email = (body.email or "").strip()
+    client_ip = request.client.host if request.client else ""
+    forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    if forwarded:
+        client_ip = forwarded
+    if email:
+        return login_email_password(email, body.password or "", client_ip=client_ip)
+    # Fallback legado (só se ODONTOGPT_LEGACY_PASSWORD_AUTH=true)
+    return login_legacy_password(body.password or "")
 
 
 @app.post("/api/logout")
 def logout_endpoint(authorization: str = Header(default=None)):
-    """Invalida o token atual (revoga sessão no servidor)."""
+    """Encerra sessão (logout Supabase / revoga token legado)."""
     revoked = revoke_token(authorization) if authorization else False
     return {"status": "ok", "revoked": revoked}
+
+
+@app.get("/api/me")
+def me(user=Depends(require_auth)):
+    """Usuário autenticado + clínicas (Supabase)."""
+    return {
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "role": user.role,
+            "active_clinic_id": user.active_clinic_id,
+            "active_workspace": user.active_workspace,
+            "account_modes": user.account_modes,
+            "clinics": user.clinics,
+            "auth_source": user.auth_source,
+        }
+    }
+
+
+@app.post("/api/clinic/sync/push")
+def clinic_sync_push(user=Depends(require_auth)):
+    """Push CRM local + memória Hermes → Supabase (canônico multi-tenant)."""
+    import clinic_sync
+    import clinic_context as cx
+
+    cid = user.active_clinic_id or cx.clinic_id()
+    # se user tem clinics, preferir a ativa ou a primeira
+    if user.clinics and not user.active_clinic_id:
+        cid = user.clinics[0].get("clinic_id") or cid
+    result = clinic_sync.push_clinic(cid)
+    if not result.get("ok"):
+        raise HTTPException(status_code=500, detail=result.get("error") or "sync_failed")
+    return result
+
+
+@app.post("/api/clinic/sync/pull")
+def clinic_sync_pull(user=Depends(require_auth)):
+    """Pull Supabase → SQLite local da clínica."""
+    import clinic_sync
+    import clinic_context as cx
+
+    cid = user.active_clinic_id or cx.clinic_id()
+    if user.clinics and not user.active_clinic_id:
+        cid = user.clinics[0].get("clinic_id") or cid
+    result = clinic_sync.pull_clinic(cid)
+    if not result.get("ok"):
+        raise HTTPException(status_code=500, detail=result.get("error") or "pull_failed")
+    return result
+
+
+@app.get("/api/clinic/sync/status")
+def clinic_sync_status(user=Depends(require_auth)):
+    """Status do tenant ativo: paths locais + contagens."""
+    import clinic_context as cx
+    from database import resolve_db_path
+    import os
+    from pathlib import Path
+
+    cid = user.active_clinic_id or cx.clinic_id()
+    db = resolve_db_path()
+    mem = cx.clinic_memory_dir(cid)
+    mem_files = [p.name for p in mem.iterdir() if p.is_file()] if mem.is_dir() else []
+    return {
+        "clinic_id": cid,
+        "sqlite": db,
+        "sqlite_exists": os.path.isfile(db),
+        "sqlite_size": os.path.getsize(db) if os.path.isfile(db) else 0,
+        "memory_dir": str(mem),
+        "memory_files": mem_files,
+        "hermes_session_sample": cx.hermes_session_key("admin", "Gerente", cid=cid),
+    }
 
 
 # ─── Cadastro da clínica ────────────────────────────────────────────
@@ -111,6 +317,197 @@ def put_clinica(body: ClinicaBody):
     payload = body.model_dump(exclude_unset=True)
     data = clinic_config.update_clinica(payload)
     return {"ok": True, "data": data}
+
+
+# ─── Marca / identidade visual ──────────────────────────────────────
+
+@app.get("/api/clinica/marca", dependencies=[Depends(require_auth)])
+def get_clinica_marca():
+    return {"data": brand_store.get_brand()}
+
+
+@app.put("/api/clinica/marca", dependencies=[Depends(require_auth)])
+def put_clinica_marca(body: ClinicaMarcaBody):
+    payload = body.model_dump(exclude_unset=True)
+    try:
+        data = brand_store.update_brand(payload)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "data": data}
+
+
+@app.post("/api/clinica/marca/logo", dependencies=[Depends(require_auth)])
+async def post_clinica_logo(file: UploadFile = File(...)):
+    raw = await file.read()
+    try:
+        data = brand_store.save_logo(file.filename or "logo.png", raw)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "data": data}
+
+
+@app.get("/api/clinica/marca/logo-file", dependencies=[Depends(require_auth)])
+def get_clinica_logo_file():
+    from fastapi.responses import FileResponse
+
+    path = brand_store.logo_file_path()
+    if not path:
+        raise HTTPException(status_code=404, detail="logo não cadastrada")
+    return FileResponse(path)
+
+
+# ─── Biblioteca de entregáveis ──────────────────────────────────────
+
+@app.get("/api/entregaveis", dependencies=[Depends(require_auth)])
+def list_entregaveis(
+    tipo: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    limit: int = Query(60, ge=1, le=200),
+):
+    return {
+        "data": entregaveis_store.list_entregaveis(tipo=tipo, status=status, limit=limit),
+        "tipos": [
+            {"id": k, "label": v}
+            for k, v in entregaveis_store.TIPO_LABELS.items()
+            if k not in ("relatorio", "apresentacao_legacy")
+        ],
+    }
+
+
+@app.get("/api/entregaveis/{eid}", dependencies=[Depends(require_auth)])
+def get_entregavel(eid: int):
+    item = entregaveis_store.get_entregavel(eid)
+    if not item:
+        raise HTTPException(status_code=404, detail="entregável não encontrado")
+    return {"data": item}
+
+
+@app.post("/api/entregaveis", dependencies=[Depends(require_auth)])
+def create_entregavel(body: EntregavelCreateBody):
+    try:
+        item = entregaveis_store.create_entregavel(
+            tipo=body.tipo,
+            titulo=body.titulo,
+            corpo_md=body.corpo_md,
+            operador=body.operador or "Gerente",
+            origem=body.origem or "manual",
+            meta=body.meta,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "data": item}
+
+
+@app.post("/api/entregaveis/{eid}/nova-versao", dependencies=[Depends(require_auth)])
+def entregavel_nova_versao(eid: int, body: EntregavelNovaVersaoBody):
+    try:
+        item = entregaveis_store.nova_versao(
+            eid,
+            corpo_md=body.corpo_md,
+            titulo=body.titulo,
+            operador=body.operador or "Gerente",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"ok": True, "data": item}
+
+
+@app.patch("/api/entregaveis/{eid}", dependencies=[Depends(require_auth)])
+def patch_entregavel(eid: int, body: EntregavelUpdateBody):
+    try:
+        item = entregaveis_store.update_entregavel(
+            eid, status=body.status, titulo=body.titulo
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"ok": True, "data": item}
+
+
+@app.get("/api/entregaveis/{eid}/preview", dependencies=[Depends(require_auth)])
+def entregavel_preview(eid: int):
+    from fastapi.responses import HTMLResponse
+
+    try:
+        html_doc = entregaveis_store.build_preview_html(eid)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="entregável não encontrado")
+    return HTMLResponse(html_doc)
+
+
+@app.post("/api/entregaveis/preview", dependencies=[Depends(require_auth)])
+def entregavel_preview_adhoc(body: EntregavelPreviewBody):
+    """Preview branded a partir do conteúdo do chat (sem id de biblioteca)."""
+    from fastapi.responses import HTMLResponse
+
+    if not (body.corpo_md or "").strip():
+        raise HTTPException(status_code=400, detail="corpo vazio")
+    html_doc = entregaveis_store.build_preview_html_content(
+        titulo=body.titulo,
+        corpo_md=body.corpo_md,
+        tipo=body.tipo,
+        tipo_label=body.tipo_label,
+        versao=body.versao,
+        created_at=body.created_at,
+    )
+    return HTMLResponse(html_doc)
+
+
+@app.get("/api/entregaveis/{eid}/export", dependencies=[Depends(require_auth)])
+def entregavel_export(
+    eid: int,
+    fmt: str = Query("pdf", pattern="^(pdf|docx)$"),
+):
+    """Baixa entregável da biblioteca em PDF ou DOCX (não markdown)."""
+    from fastapi.responses import Response
+
+    try:
+        data, media, filename = entregaveis_store.export_entregavel(eid, fmt=fmt)
+    except ValueError as e:
+        msg = str(e)
+        code = 404 if "não encontrado" in msg else 400
+        raise HTTPException(status_code=code, detail=msg)
+    return Response(
+        content=data,
+        media_type=media,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@app.post("/api/entregaveis/export", dependencies=[Depends(require_auth)])
+def entregavel_export_adhoc(body: EntregavelExportBody):
+    """Exporta conteúdo do chat (sem id de biblioteca) em PDF ou DOCX."""
+    from fastapi.responses import Response
+
+    try:
+        data, media, filename = entregaveis_store.export_bytes(
+            titulo=body.titulo,
+            corpo_md=body.corpo_md,
+            tipo=body.tipo or "relatorio_executivo",
+            fmt=body.fmt or "pdf",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return Response(
+        content=data,
+        media_type=media,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@app.get("/api/entregaveis/{eid}/thumb", dependencies=[Depends(require_auth)])
+def entregavel_thumb(eid: int):
+    from fastapi.responses import FileResponse
+
+    path = entregaveis_store.thumb_path(eid)
+    if not path:
+        raise HTTPException(status_code=404, detail="thumb não encontrada")
+    return FileResponse(path, media_type="image/svg+xml")
 
 
 @app.get("/api/operacao", dependencies=[Depends(require_auth)])
@@ -271,6 +668,12 @@ def status_operacao():
 
 
 # ─── Métricas ───────────────────────────────────────────────────────
+
+@app.get("/api/dashboard/cockpit", dependencies=[Depends(require_auth)])
+def dashboard_cockpit():
+    """Visão geral agentica: missão, riscos, trabalho do OdontoGPT, fila, ganho."""
+    return build_cockpit()
+
 
 @app.get("/api/metricas", dependencies=[Depends(require_auth)])
 def get_metricas():
@@ -645,8 +1048,211 @@ def atualizar_prontuario(prontuario_id: int, body: ProntuarioUpdate):
 # ─── Chat atendente (WhatsApp) ──────────────────────────────────────
 
 @app.get("/api/chat/conversas", dependencies=[Depends(require_auth)])
-def chat_listar_conversas(limit: int = Query(50, ge=1, le=100)):
-    return {"data": chat_store.listar_conversas(limit=limit)}
+def chat_listar_conversas(
+    limit: int = Query(50, ge=1, le=100),
+    since: Optional[str] = Query(None, description="funil_version anterior; se igual, changed=false"),
+):
+    version = chat_store.funil_version()
+    if since and since == version:
+        return {
+            "changed": False,
+            "version": version,
+            "data": None,
+            "resumo": None,
+            "stages": chat_store.STAGES,
+        }
+    data = chat_store.listar_conversas(limit=limit)
+    resumo = chat_store.resumo_crm(data)
+    return {
+        "changed": True,
+        "version": resumo.get("version") or version,
+        "data": data,
+        "resumo": resumo,
+        "stages": chat_store.STAGES,
+        "tag_presets": chat_store.TAG_PRESETS,
+    }
+
+
+@app.get("/api/chat/conversas/events", dependencies=[Depends(require_auth)])
+async def chat_conversas_events(
+    since: str = Query(..., description="funil_version observada pelo cliente"),
+    timeout: int = Query(25, ge=2, le=40),
+    limit: int = Query(50, ge=1, le=100),
+):
+    """Long-poll: bloqueia até o funil mudar ou timeout (tempo real sem websocket)."""
+    import asyncio
+
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        version = chat_store.funil_version()
+        if version != since:
+            data = chat_store.listar_conversas(limit=limit)
+            resumo = chat_store.resumo_crm(data)
+            return {
+                "changed": True,
+                "version": resumo.get("version") or version,
+                "data": data,
+                "resumo": resumo,
+                "stages": chat_store.STAGES,
+                "tag_presets": chat_store.TAG_PRESETS,
+            }
+        await asyncio.sleep(1.2)
+    return {
+        "changed": False,
+        "version": chat_store.funil_version(),
+        "data": None,
+        "resumo": None,
+        "stages": chat_store.STAGES,
+    }
+
+
+@app.get("/api/chat/crm/stages", dependencies=[Depends(require_auth)])
+def chat_crm_stages():
+    return {
+        "stages": chat_store.STAGES,
+        "prioridades": sorted(chat_store.PRIORIDADES),
+        "tag_presets": chat_store.TAG_PRESETS,
+        "sla_atencao_min": chat_store.SLA_ATENCAO_MIN,
+        "sla_critico_min": chat_store.SLA_CRITICO_MIN,
+        "lead_scores": chat_store.LEAD_SCORES,
+        "script_fluxos": list(chat_store.SCRIPT_FLUXOS.values()),
+    }
+
+
+@app.patch("/api/chat/conversas/{telefone}/crm", dependencies=[Depends(require_auth)])
+def chat_atualizar_crm(telefone: str, body: ChatCrmBody):
+    phone = normalize_phone(telefone)
+    if not phone:
+        raise HTTPException(status_code=400, detail="Telefone inválido")
+    try:
+        sess = chat_store.atualizar_crm(
+            phone,
+            stage=body.stage,
+            prioridade=body.prioridade,
+            notas_crm=body.notas_crm,
+            tags=body.tags,
+            clear_notas=body.clear_notas,
+            lead_score=body.lead_score,
+            script_fluxo=body.script_fluxo,
+            script_passo=body.script_passo,
+            clear_script=body.clear_script,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True, "sessao": sess}
+
+
+@app.post("/api/chat/conversas/{telefone}/perfil/refresh", dependencies=[Depends(require_auth)])
+def chat_refresh_perfil(telefone: str, force: bool = Query(False)):
+    phone = normalize_phone(telefone)
+    if not phone:
+        raise HTTPException(status_code=400, detail="Telefone inválido")
+    # injeta chave Evolution do host se ainda não no processo
+    if not os.environ.get("EVOLUTION_API_KEY"):
+        try:
+            import json as _json
+            from pathlib import Path as _P
+
+            p = _P("/tmp/evo_env.json")
+            if p.is_file():
+                cfg = _json.loads(p.read_text())
+                os.environ.setdefault("EVOLUTION_API_KEY", cfg.get("key") or "")
+                os.environ.setdefault("EVOLUTION_INSTANCE", cfg.get("instance") or "odontogpt")
+                os.environ.setdefault("EVOLUTION_API_URL", cfg.get("url") or "http://127.0.0.1:8080")
+        except Exception:
+            pass
+    result = chat_store.refresh_wa_perfil(phone, max_age_hours=0 if force else 12)
+    return result
+
+
+@app.get("/api/chat/conversas/{telefone}/historico", dependencies=[Depends(require_auth)])
+def chat_historico(telefone: str, limit: int = Query(40, ge=1, le=100)):
+    phone = normalize_phone(telefone)
+    if not phone:
+        raise HTTPException(status_code=400, detail="Telefone inválido")
+    return {
+        "telefone": phone,
+        "eventos": chat_store.listar_eventos(phone, limit=limit),
+        "followups": chat_store.listar_followups(phone),
+        "sessao": chat_store.get_modo(phone),
+    }
+
+
+@app.post("/api/chat/conversas/{telefone}/followups", dependencies=[Depends(require_auth)])
+def chat_criar_followup(telefone: str, body: ChatFollowupBody):
+    phone = normalize_phone(telefone)
+    if not phone:
+        raise HTTPException(status_code=400, detail="Telefone inválido")
+    row = chat_store.criar_followup(
+        phone,
+        body.titulo,
+        tipo=body.tipo or "manual",
+        descricao=body.descricao,
+        due_hours=body.due_hours or 24,
+    )
+    return {"ok": True, "followup": row}
+
+
+@app.patch("/api/chat/followups/{followup_id}", dependencies=[Depends(require_auth)])
+def chat_status_followup(followup_id: int, body: ChatFollowupStatusBody):
+    try:
+        row = chat_store.atualizar_followup(followup_id, body.status)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if not row:
+        raise HTTPException(status_code=404, detail="Follow-up não encontrado")
+    return {"ok": True, "followup": row}
+
+
+@app.post("/api/chat/conversas/{telefone}/rascunho", dependencies=[Depends(require_auth)])
+def chat_salvar_rascunho(telefone: str, body: ChatRascunhoBody):
+    phone = normalize_phone(telefone)
+    if not phone:
+        raise HTTPException(status_code=400, detail="Telefone inválido")
+    try:
+        sess = chat_store.salvar_rascunho(phone, body.mensagem, body.origem or "humano")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True, "sessao": sess}
+
+
+@app.delete("/api/chat/conversas/{telefone}/rascunho", dependencies=[Depends(require_auth)])
+def chat_descartar_rascunho(telefone: str):
+    phone = normalize_phone(telefone)
+    if not phone:
+        raise HTTPException(status_code=400, detail="Telefone inválido")
+    try:
+        sess = chat_store.limpar_rascunho(phone)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True, "sessao": sess}
+
+
+@app.post("/api/chat/conversas/{telefone}/rascunho/aprovar", dependencies=[Depends(require_auth)])
+def chat_aprovar_rascunho(telefone: str, body: ChatAprovarRascunhoBody):
+    """HITL: assume conversa se preciso, envia WhatsApp e limpa rascunho."""
+    phone = normalize_phone(telefone)
+    if not phone:
+        raise HTTPException(status_code=400, detail="Telefone inválido")
+    sess = chat_store.get_modo(phone)
+    texto = (body.mensagem or sess.get("rascunho_resposta") or "").strip()
+    if not texto:
+        raise HTTPException(status_code=400, detail="Nenhum rascunho para aprovar")
+    atendente = (body.atendente or sess.get("atendente") or "Atendente").strip()
+    if sess.get("modo") != "human":
+        chat_store.set_modo(phone, "human", atendente)
+    # reutiliza fluxo de envio
+    if phone == TEST_CHAT_PHONE:
+        mid = chat_store.registrar_mensagem(
+            phone, "reply", texto, classificacao=f"atendente:{atendente}:hitl"
+        )
+        chat_store.limpar_rascunho(phone)
+        return {"ok": True, "bridge": {"simulador": True, "id": mid}, "sessao": chat_store.get_modo(phone)}
+    ok, info = bridge_send_text(phone, texto, atendente)
+    if not ok:
+        raise HTTPException(status_code=502, detail=info)
+    chat_store.limpar_rascunho(phone)
+    return {"ok": True, "bridge": info, "sessao": chat_store.get_modo(phone)}
 
 
 @app.get("/api/chat/conversas/{telefone}/mensagens", dependencies=[Depends(require_auth)])
@@ -663,6 +1269,78 @@ def chat_mensagens(
         "sessao": chat_store.get_modo(phone),
         "data": chat_store.listar_mensagens(phone, limit=limit, after_id=after_id),
     }
+
+
+@app.post("/api/chat/mensagens/{interacao_id}/feedback", dependencies=[Depends(require_auth)])
+def chat_message_feedback(interacao_id: int, body: MessageFeedbackBody):
+    try:
+        fb = chat_store.upsert_message_feedback(
+            interacao_id, body.nota, body.comentario, operador="dashboard"
+        )
+        return {"ok": True, "feedback": fb}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@app.get("/api/chat/mensagens/{interacao_id}/feedback", dependencies=[Depends(require_auth)])
+def chat_get_message_feedback(interacao_id: int):
+    fb = chat_store.get_message_feedback(interacao_id)
+    if not fb:
+        raise HTTPException(status_code=404, detail="sem feedback")
+    return {"ok": True, "feedback": fb}
+
+
+@app.post("/api/chat/mensagens/{interacao_id}/reescrever", dependencies=[Depends(require_auth)])
+def chat_reescrever_mensagem(interacao_id: int, body: MessageRewriteBody):
+    inter = chat_store.get_interacao(interacao_id)
+    if not inter or not chat_store.is_bot_reply(inter):
+        raise HTTPException(status_code=400, detail="mensagem inválida para reescrita")
+    try:
+        if body.nota is not None:
+            chat_store.upsert_message_feedback(
+                interacao_id, body.nota, body.comentario, operador="dashboard"
+            )
+        elif body.comentario:
+            existing = chat_store.get_message_feedback(interacao_id)
+            if existing:
+                chat_store.upsert_message_feedback(
+                    interacao_id,
+                    existing["nota"],
+                    body.comentario,
+                    operador="dashboard",
+                )
+            else:
+                raise HTTPException(status_code=400, detail="informe a nota (1–5)")
+        fb = chat_store.get_message_feedback(interacao_id)
+        if not fb:
+            raise HTTPException(status_code=400, detail="salve a nota antes de reescrever")
+
+        phone = inter.get("telefone") or ""
+        hist_rows = chat_store.listar_mensagens(phone, limit=24, after_id=0)
+        history = []
+        for h in hist_rows:
+            if h.get("tipo") == "envio":
+                history.append({"role": "user", "content": h.get("mensagem") or ""})
+            elif h.get("tipo") == "reply":
+                history.append({"role": "assistant", "content": h.get("mensagem") or ""})
+
+        from patient_atendimento import rewrite_patient_reply
+
+        ok, text = rewrite_patient_reply(
+            original=inter.get("mensagem") or "",
+            nota=fb.get("nota"),
+            comentario=fb.get("comentario"),
+            history=history,
+        )
+        if not ok:
+            raise HTTPException(status_code=502, detail=text)
+
+        out = chat_store.apply_message_rewrite(interacao_id, text)
+        return {"ok": True, **out}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @app.post("/api/chat/conversas/{telefone}/assumir", dependencies=[Depends(require_auth)])
@@ -755,6 +1433,15 @@ def chat_teste_simular(body: ChatTesteBody):
         )
         raise HTTPException(status_code=502, detail=answer)
 
+    # Fecha o loop CRM: modelo free não tem tools — ações :::crm::: + sanitização
+    crm_actions: list = []
+    try:
+        from patient_atendimento import process_patient_reply
+
+        answer, crm_actions = process_patient_reply(phone, answer)
+    except Exception as ex:
+        print(f"[chat_teste_simular] process_patient_reply: {ex}")
+
     reply_id = chat_store.registrar_mensagem(
         phone, "reply", answer, classificacao="teste:bot"
     )
@@ -766,6 +1453,7 @@ def chat_teste_simular(body: ChatTesteBody):
         "reply_id": reply_id,
         "bot_respondeu": True,
         "resposta": answer,
+        "crm_actions": crm_actions,
     }
 
 
@@ -793,6 +1481,73 @@ def agent_briefing():
     return {"briefing": b, "quick_prompts": QUICK_PROMPTS}
 
 
+# ─── Memória / Segundo cérebro (AG-UI) ───────────────────────────────
+
+@app.get("/api/agent/memoria", dependencies=[Depends(require_auth)])
+def agent_memoria_overview():
+    return memory_service.get_memory_overview()
+
+
+@app.post("/api/agent/memoria/seed", dependencies=[Depends(require_auth)])
+def agent_memoria_seed(force: bool = Query(False)):
+    """Importa second-brain Hermes + protocolos base para a biblioteca."""
+    return memory_service.seed_from_second_brain(force=force)
+
+
+@app.get("/api/agent/memoria/documentos", dependencies=[Depends(require_auth)])
+def agent_memoria_list_docs(limit: int = Query(50, ge=1, le=200)):
+    return {"data": memory_service.list_docs(limit=limit)}
+
+
+@app.get("/api/agent/memoria/documentos/{doc_id}", dependencies=[Depends(require_auth)])
+def agent_memoria_get_doc(doc_id: str):
+    doc = memory_service.get_doc(doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento não encontrado")
+    return doc
+
+
+@app.post("/api/agent/memoria/documentos", dependencies=[Depends(require_auth)])
+async def agent_memoria_upload_doc(
+    file: UploadFile = File(...),
+    titulo: Optional[str] = Form(None),
+    tipo: str = Form("documento"),
+):
+    raw = await file.read()
+    try:
+        doc = memory_service.add_document(
+            file.filename or "arquivo",
+            raw,
+            file.content_type,
+            titulo=titulo,
+            tipo=tipo or "documento",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "documento": doc}
+
+
+@app.post("/api/agent/memoria/notas", dependencies=[Depends(require_auth)])
+def agent_memoria_add_note(body: MemoryNoteBody):
+    try:
+        doc = memory_service.add_note(
+            titulo=body.titulo or "Nota",
+            conteudo=body.conteudo,
+            tipo=body.tipo or "nota",
+            tags=body.tags,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "documento": doc}
+
+
+@app.delete("/api/agent/memoria/documentos/{doc_id}", dependencies=[Depends(require_auth)])
+def agent_memoria_delete_doc(doc_id: str):
+    if not memory_service.delete_doc(doc_id):
+        raise HTTPException(status_code=404, detail="Documento não encontrado")
+    return {"ok": True}
+
+
 @app.post("/api/agent/upload", dependencies=[Depends(require_auth)])
 async def agent_upload(file: UploadFile = File(...)):
     raw = await file.read()
@@ -803,8 +1558,8 @@ async def agent_upload(file: UploadFile = File(...)):
     return {"ok": True, "anexo": json.loads(meta_json(meta))}
 
 
-@app.post("/api/agent/chat", dependencies=[Depends(require_auth)])
-def agent_chat(body: AgentChatBody):
+def _agent_chat_prepare(body: AgentChatBody):
+    """Prepara sessão, anexos e snapshot — compartilhado por chat e stream."""
     sid = admin_session_id(body.operador or "Gerente")
     text = (body.mensagem or "").strip()
     anexos = body.anexos_ids or []
@@ -814,15 +1569,19 @@ def agent_chat(body: AgentChatBody):
     metrics_hint = None
     if body.incluir_metricas:
         try:
-            m = get_metricas()
-            b = clinic_briefing()
-            metrics_hint = (
-                f"pacientes={m.get('total_pacientes')} agendamentos_hoje={m.get('agendamentos_hoje')} "
-                f"pendentes={m.get('agendamentos_pendentes')} lembretes_pendentes={m.get('lembretes_pendentes')} "
-                f"lembretes_falhos={m.get('lembretes_falhos')} inativos_120d={b.get('pacientes_sem_retorno_120d')}"
-            )
-        except Exception:
-            metrics_hint = None
+            metrics_hint = agent_operational_snapshot()
+        except Exception as ex:
+            print(f"[agent_chat] snapshot fallback: {ex}")
+            try:
+                m = get_metricas()
+                b = clinic_briefing()
+                metrics_hint = (
+                    f"pacientes={m.get('total_pacientes')} agendamentos_hoje={m.get('agendamentos_hoje')} "
+                    f"pendentes={m.get('agendamentos_pendentes')} lembretes_pendentes={m.get('lembretes_pendentes')} "
+                    f"lembretes_falhos={m.get('lembretes_falhos')} inativos_120d={b.get('pacientes_sem_retorno_120d')}"
+                )
+            except Exception:
+                metrics_hint = None
 
     attach_meta: list[dict] = []
     content_parts: list = []
@@ -840,38 +1599,146 @@ def agent_chat(body: AgentChatBody):
 
     agent_store.append(sid, "user", display_user, meta={"anexos": attach_meta} if attach_meta else None)
     history = agent_store.history_for_llm(sid, max_turns=10)
-    # última msg user já in history via append — remover duplicata se presente
     if history and history[-1]["role"] == "user":
         history = history[:-1]
 
     prefs = agent_store.get_preferencias(body.operador or "Gerente")
+    return {
+        "sid": sid,
+        "text": text,
+        "metrics_hint": metrics_hint,
+        "history": history,
+        "content_parts": content_parts if content_parts else None,
+        "prefs": prefs,
+        "operador": body.operador or "Gerente",
+    }
+
+
+@app.post("/api/agent/chat", dependencies=[Depends(require_auth)])
+def agent_chat(body: AgentChatBody):
+    prep = _agent_chat_prepare(body)
     ok, answer = ask_admin(
-        sid,
-        text,
-        metrics_hint=metrics_hint,
-        history=history,
-        content_parts=content_parts if content_parts else None,
-        prefs=prefs,
+        prep["sid"],
+        prep["text"],
+        metrics_hint=prep["metrics_hint"],
+        history=prep["history"],
+        content_parts=prep["content_parts"],
+        prefs=prep["prefs"],
     )
     if not ok:
-        print(f"[agent_chat] provider error session={sid}: {answer}")
+        print(f"[agent_chat] provider error session={prep['sid']}: {answer}")
         friendly = "Não consegui responder agora. Tente de novo em instantes."
-        agent_store.append(sid, "assistant", friendly)
+        agent_store.append(prep["sid"], "assistant", friendly)
         raise HTTPException(status_code=502, detail=friendly)
-    display, entrega = agent_store.parse_entrega(answer)
-    meta = {"entrega": entrega} if entrega else None
+    return _agent_finalize_answer(prep["sid"], answer, prep["operador"])
+
+
+def _agent_finalize_answer(sid: str, answer: str, operador: str):
+    display, meta = agent_store.parse_assistant_message(answer)
+    entrega = (meta or {}).get("entrega")
+    acoes = (meta or {}).get("acoes")
     msg_id = agent_store.append(sid, "assistant", display, meta=meta)
     saved_ent = None
     if entrega:
         saved_ent = agent_store.save_entrega(
-            sid, msg_id, entrega["tipo"], entrega["titulo"], entrega["corpo_md"]
+            sid,
+            msg_id,
+            entrega["tipo"],
+            entrega["titulo"],
+            entrega["corpo_md"],
+            operador=operador,
         )
+        if meta is None:
+            meta = {}
+        meta = dict(meta)
+        meta["entrega"] = saved_ent
+        try:
+            agent_store.update_message_meta(msg_id, meta)
+        except Exception:
+            pass
     return {
         "ok": True,
         "resposta": display,
         "session_id": sid,
         "entrega": saved_ent,
+        "acoes": acoes or [],
+        "message_id": msg_id,
     }
+
+
+@app.post("/api/agent/chat/stream", dependencies=[Depends(require_auth)])
+async def agent_chat_stream(body: AgentChatBody, request: Request):
+    """SSE: tokens em tempo real + evento final com entrega/ações parseadas.
+
+    Para se o cliente desconectar (cancelar) — não grava resposta parcial.
+    """
+    prep = _agent_chat_prepare(body)
+    stream_iter = ask_admin_stream(
+        prep["sid"],
+        prep["text"],
+        metrics_hint=prep["metrics_hint"],
+        history=prep["history"],
+        content_parts=prep["content_parts"],
+        prefs=prep["prefs"],
+    )
+
+    def _next_chunk():
+        try:
+            return next(stream_iter), False
+        except StopIteration:
+            return None, True
+
+    async def event_stream():
+        yield f"event: status\ndata: {json.dumps({'status': 'crm_ok'}, ensure_ascii=False)}\n\n"
+        buf: list[str] = []
+        cancelled = False
+        try:
+            while True:
+                if await request.is_disconnected():
+                    cancelled = True
+                    print(f"[agent_chat_stream] client disconnected sid={prep['sid']}")
+                    break
+                chunk, done = await asyncio.to_thread(_next_chunk)
+                if done:
+                    break
+                buf.append(chunk)
+                yield f"event: token\ndata: {json.dumps({'t': chunk}, ensure_ascii=False)}\n\n"
+
+            if cancelled:
+                yield f"event: cancelled\ndata: {json.dumps({'ok': False}, ensure_ascii=False)}\n\n"
+                return
+
+            answer = "".join(buf)
+            if not answer.strip():
+                raise RuntimeError("resposta vazia")
+            result = _agent_finalize_answer(prep["sid"], answer, prep["operador"])
+            yield f"event: done\ndata: {json.dumps(result, ensure_ascii=False)}\n\n"
+        except Exception as ex:
+            if cancelled:
+                return
+            print(f"[agent_chat_stream] error: {ex}")
+            friendly = "Não consegui responder agora. Tente de novo em instantes."
+            try:
+                agent_store.append(prep["sid"], "assistant", friendly)
+            except Exception:
+                pass
+            yield f"event: error\ndata: {json.dumps({'detail': friendly}, ensure_ascii=False)}\n\n"
+        finally:
+            # fecha gerador upstream (encerra HTTP do provider se possível)
+            try:
+                stream_iter.close()
+            except Exception:
+                pass
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.get("/api/agent/preferencias", dependencies=[Depends(require_auth)])
@@ -899,6 +1766,116 @@ def agent_list_entregas(
 ):
     sid = admin_session_id(operador)
     return {"session_id": sid, "data": agent_store.list_entregas(sid, limit=limit)}
+
+
+# ─── Tarefas da clínica + rotinas programadas ───────────────────────
+
+@app.get("/api/agent/rotinas/catalogo", dependencies=[Depends(require_auth)])
+def agent_rotinas_catalogo():
+    return {"data": tarefas_store.list_catalog()}
+
+
+@app.get("/api/agent/tarefas", dependencies=[Depends(require_auth)])
+def agent_list_tarefas(
+    operador: str = Query("Gerente"),
+    status: Optional[str] = Query(None),
+    limit: int = Query(80, ge=1, le=200),
+):
+    return {"data": tarefas_store.list_tarefas(operador, status=status, limit=limit)}
+
+
+@app.post("/api/agent/tarefas", dependencies=[Depends(require_auth)])
+def agent_create_tarefa(body: TarefaCreateBody):
+    try:
+        return tarefas_store.create_tarefa(
+            body.operador or "Gerente",
+            titulo=body.titulo,
+            descricao=body.descricao,
+            prioridade=body.prioridade or "media",
+            rotina_id=body.rotina_id,
+            prompt=body.prompt,
+            due_at=body.due_at,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/agent/tarefas/from-rotina", dependencies=[Depends(require_auth)])
+def agent_tarefa_from_rotina(body: TarefaFromRotinaBody):
+    try:
+        return tarefas_store.create_from_rotina(body.operador or "Gerente", body.rotina_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.patch("/api/agent/tarefas/{tarefa_id}", dependencies=[Depends(require_auth)])
+def agent_update_tarefa(tarefa_id: int, body: TarefaUpdateBody):
+    try:
+        return tarefas_store.update_tarefa(
+            tarefa_id,
+            status=body.status,
+            titulo=body.titulo,
+            descricao=body.descricao,
+            prioridade=body.prioridade,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.delete("/api/agent/tarefas/{tarefa_id}", dependencies=[Depends(require_auth)])
+def agent_delete_tarefa(tarefa_id: int):
+    if not tarefas_store.delete_tarefa(tarefa_id):
+        raise HTTPException(status_code=404, detail="tarefa não encontrada")
+    return {"ok": True}
+
+
+@app.get("/api/agent/rotinas/programadas", dependencies=[Depends(require_auth)])
+def agent_list_rotinas_programadas(operador: str = Query("Gerente")):
+    return {
+        "data": tarefas_store.list_rotinas_programadas(operador),
+        "devidas": tarefas_store.due_rotinas(operador),
+    }
+
+
+@app.put("/api/agent/rotinas/programadas", dependencies=[Depends(require_auth)])
+def agent_upsert_rotina(body: RotinaProgramadaBody):
+    try:
+        return tarefas_store.upsert_rotina_programada(
+            body.operador or "Gerente",
+            body.rotina_id,
+            schedule=body.schedule,
+            hora=body.hora,
+            weekday=body.weekday,
+            ativo=body.ativo,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/api/agent/rotinas/programadas/{rotina_id}", dependencies=[Depends(require_auth)])
+def agent_delete_rotina(rotina_id: str, operador: str = Query("Gerente")):
+    if not tarefas_store.delete_rotina_programada(operador, rotina_id):
+        raise HTTPException(status_code=404, detail="rotina não encontrada")
+    return {"ok": True}
+
+
+@app.post("/api/agent/rotinas/programadas/{rotina_id}/run", dependencies=[Depends(require_auth)])
+def agent_run_rotina(rotina_id: str, operador: str = Query("Gerente")):
+    """Marca execução e devolve o prompt da rotina (o front envia ao chat).
+
+    Não cria tarefa de checklist: o trabalho vive na timeline do agente (AG-UI).
+    """
+    item = tarefas_store.get_catalog_item(rotina_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="rotina desconhecida")
+    marked = tarefas_store.mark_rotina_run(operador, rotina_id)
+    return {
+        "ok": True,
+        "rotina": item,
+        "programada": marked,
+        "tarefa": None,
+        "prompt": item["prompt"],
+    }
 
 
 # ─── Interações (conversa WhatsApp) ─────────────────────────────────
