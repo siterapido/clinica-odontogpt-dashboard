@@ -1,20 +1,30 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  Send,
   Mic,
-  MicOff,
   Paperclip,
   Loader2,
   X,
-  Sparkles,
-  Bot,
-  User,
   CheckCircle2,
   Circle,
+  Volume2,
+  VolumeX,
+  FileText,
+  Settings2,
+  ArrowUp,
+  Image as ImageIcon,
 } from 'lucide-react'
 import Loading from '../Loading'
-import { Button } from '@/components/ui/button'
 import EntregaCard from './EntregaCard'
+import MessageContent from './MessageContent'
+import { pensamentoPreview } from './workSteps'
+
+function fileKind(f) {
+  const name = String(f?.localName || f?.filename || '').toLowerCase()
+  const mime = String(f?.mime || f?.content_type || '').toLowerCase()
+  if (mime.startsWith('image/') || /\.(png|jpe?g|gif|webp|heic)$/.test(name)) return 'image'
+  if (mime.includes('pdf') || name.endsWith('.pdf')) return 'pdf'
+  return 'file'
+}
 
 function formatTime(iso) {
   if (!iso) return ''
@@ -36,8 +46,22 @@ function initialsFromName(name) {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
 }
 
+/** Esconde delimitadores AG-UI incompletos durante o stream (evita flash de sintaxe). */
+export function scrubStreamingText(raw) {
+  let s = String(raw || '')
+  // bloco aberto sem fechar :::
+  const open = s.lastIndexOf(':::')
+  if (open >= 0) {
+    const after = s.slice(open + 3)
+    if (!after.includes(':::')) {
+      s = s.slice(0, open).trimEnd()
+    }
+  }
+  return s
+}
+
 /**
- * Timeline de trabalho do agente (metáfora AG-UI: eventos, não chat WhatsApp).
+ * Workspace principal do agente — timeline, markdown, botões, voz, pensamento.
  */
 export default function ChatWorkspace({
   nomeAgente = 'OdontoGPT',
@@ -54,20 +78,30 @@ export default function ChatWorkspace({
   listening = false,
   onToggleMic,
   onSend,
+  onCancelSend,
+  onRetry,
   statusText = 'Observando a operação',
   workSteps = [],
   emptySuggestions = [],
+  inputSuggestions = [],
   onSuggestion,
   onOpenEntrega,
   onPedirAjuste,
   onOpenConfig,
   onOpenEntregas,
   entregasCount = 0,
+  voiceMode = false,
+  onToggleVoiceMode,
+  speaking = false,
+  onStopSpeak,
 }) {
   const bottomRef = useRef(null)
+  const taRef = useRef(null)
   const displayName = (nomeAgente || 'OdontoGPT').trim() || 'OdontoGPT'
   const initials = initialsFromName(displayName)
   const [stepTick, setStepTick] = useState(0)
+  const [elapsedSec, setElapsedSec] = useState(0)
+  const canSend = !sending && (!!texto.trim() || pendingFiles.length > 0)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -81,9 +115,28 @@ export default function ChatWorkspace({
     setStepTick(0)
     const id = setInterval(() => {
       setStepTick(t => Math.min(t + 1, workSteps.length - 1))
-    }, 900)
+    }, 1100)
     return () => clearInterval(id)
   }, [sending, workSteps])
+
+  // Cronômetro honesto: gestor vê que o pedido não travou (sem stream ainda)
+  useEffect(() => {
+    if (!sending) {
+      setElapsedSec(0)
+      return
+    }
+    setElapsedSec(0)
+    const id = setInterval(() => setElapsedSec(s => s + 1), 1000)
+    return () => clearInterval(id)
+  }, [sending])
+
+  // Textarea cresce com o conteúdo (campo de conversa, não caixa fixa)
+  useEffect(() => {
+    const el = taRef.current
+    if (!el) return
+    el.style.height = '0px'
+    el.style.height = `${Math.min(Math.max(el.scrollHeight, 52), 160)}px`
+  }, [texto])
 
   function handleKeyDown(e) {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -94,116 +147,186 @@ export default function ChatWorkspace({
     }
   }
 
-  const isWorking = sending || listening
+  const isWorking = sending || listening || speaking
+  const thought = pensamentoPreview(workSteps, stepTick)
+  const hasStreamingMsg = msgs.some(m => m._streaming)
+  // Uma linha de status: trabalho > voz > idle (AG-UI mission status)
+  const liveStatus = sending
+    ? thought || statusText
+    : speaking
+      ? `${displayName} está falando…`
+      : statusText
 
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border-subtle bg-surface-2 shadow-card">
-      {/* Mission header */}
-      <header className="flex flex-wrap items-center gap-3 border-b border-border-subtle bg-gradient-to-r from-accent-soft/40 via-surface-2 to-surface-2 px-4 py-3">
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border-subtle bg-surface-2 shadow-card max-lg:min-h-[min(100dvh,720px)]">
+      {/* Header enxuto: identidade + status de missão + ações úteis */}
+      <header className="flex items-center gap-3 border-b border-border-subtle px-3 py-2.5 md:px-4">
         <div
-          className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-brand text-sm font-semibold text-white shadow-card"
+          className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand text-xs font-semibold text-white"
           aria-hidden
         >
           {initials}
           <span
-            className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-surface-2 ${
+            className={`absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-surface-2 ${
               isWorking ? 'animate-pulse bg-accent' : 'bg-success'
             }`}
           />
         </div>
+
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="truncate font-display text-lg font-semibold text-ink md:text-xl">
-              {displayName}
-            </h1>
-            <span className="rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand">
-              Agente autônomo
-            </span>
-          </div>
-          <p className="text-xs text-ink-secondary">
-            Console da operação · não é um chat comum
+          <h1 className="truncate font-display text-[15px] font-semibold leading-tight text-ink">
+            {displayName}
+          </h1>
+          <p
+            className="mt-0.5 flex items-center gap-1.5 truncate text-[12px] text-ink-secondary"
+            role="status"
+            aria-live="polite"
+          >
+            {sending && (
+              <Loader2 size={11} className="shrink-0 animate-spin text-accent" aria-hidden />
+            )}
+            <span className="truncate">{liveStatus}</span>
           </p>
         </div>
-        <p
-          className="inline-flex items-center gap-1.5 rounded-full border border-border-subtle bg-surface-1 px-2.5 py-1 text-[11px] font-medium text-ink"
-          role="status"
-          aria-live="polite"
-        >
-          <span
-            className={`h-1.5 w-1.5 rounded-full ${
-              isWorking ? 'animate-pulse bg-accent' : 'bg-success'
-            }`}
-            aria-hidden
-          />
-          {statusText}
-        </p>
-        <div className="flex items-center gap-1.5">
-          <Button
+
+        <div className="flex shrink-0 items-center gap-0.5">
+          <button
             type="button"
-            variant="outline"
-            size="sm"
-            className="h-8 gap-1 text-xs"
-            onClick={onOpenEntregas}
-            title="Entregas preparadas"
+            onClick={onToggleVoiceMode}
+            className={`inline-flex h-8 w-8 items-center justify-center rounded-lg transition ${
+              voiceMode
+                ? 'bg-accent/15 text-accent-deep'
+                : 'text-ink-tertiary hover:bg-surface-1 hover:text-ink'
+            }`}
+            title={voiceMode ? 'Desligar modo voz' : 'Modo voz'}
+            aria-pressed={voiceMode}
           >
-            Entregas
+            {voiceMode ? <Volume2 size={16} /> : <VolumeX size={16} />}
+          </button>
+          <button
+            type="button"
+            onClick={onOpenEntregas}
+            className="relative inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-tertiary transition hover:bg-surface-1 hover:text-ink"
+            title="Entregas do agente"
+          >
+            <FileText size={16} />
             {entregasCount > 0 && (
-              <span className="rounded-full bg-accent/15 px-1.5 text-[10px] font-semibold text-accent-deep">
-                {entregasCount}
+              <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[9px] font-bold text-white">
+                {entregasCount > 9 ? '9+' : entregasCount}
               </span>
             )}
-          </Button>
-          <Button
+          </button>
+          <button
             type="button"
-            variant="outline"
-            size="sm"
-            className="h-8 text-xs"
             onClick={onOpenConfig}
-            title="Configurações do agente"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-tertiary transition hover:bg-surface-1 hover:text-ink"
+            title="Preferências do agente"
           >
-            Config
-          </Button>
+            <Settings2 size={16} />
+          </button>
         </div>
       </header>
 
       {error && (
         <div className="px-4 pt-3">
           <div
-            className="rounded-xl border border-danger/20 bg-danger/5 px-3 py-2 text-sm text-danger"
+            className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-danger/20 bg-danger/5 px-3 py-2 text-sm text-danger"
             role="alert"
           >
-            {error?.message || String(error)}
+            <span className="min-w-0 flex-1">{error?.message || String(error)}</span>
+            {typeof onRetry === 'function' && (
+              <button
+                type="button"
+                onClick={onRetry}
+                disabled={sending}
+                className="shrink-0 rounded-lg bg-danger/10 px-2.5 py-1 text-[12px] font-semibold text-danger transition hover:bg-danger/20 disabled:opacity-50"
+              >
+                Tentar de novo
+              </button>
+            )}
           </div>
         </div>
       )}
 
-      {/* Work timeline */}
-      <div className="min-h-0 flex-1 space-y-0 overflow-y-auto px-3 py-4 md:px-5">
-        {loading && <Loading label="Carregando linha do tempo" />}
+      {/* Steps compactos só enquanto trabalha — sem painel pesado de “pensamento” */}
+      {sending && workSteps.length > 0 && (
+        <div className="border-b border-border-subtle/80 px-4 py-2">
+          <div className="mx-auto flex max-w-3xl flex-wrap items-center gap-x-3 gap-y-1">
+            {workSteps.map((step, i) => {
+              const done = i < stepTick
+              const active = i === stepTick
+              return (
+                <span
+                  key={step}
+                  className={`inline-flex items-center gap-1 text-[11px] ${
+                    active
+                      ? 'font-medium text-ink'
+                      : done
+                        ? 'text-ink-tertiary'
+                        : 'text-ink-tertiary/60'
+                  }`}
+                >
+                  {done ? (
+                    <CheckCircle2 size={11} className="text-success" />
+                  ) : active ? (
+                    <Loader2 size={11} className="animate-spin text-accent" />
+                  ) : (
+                    <Circle size={11} className="opacity-30" />
+                  )}
+                  {step}
+                </span>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {speaking && (
+        <div className="flex items-center justify-between gap-2 border-b border-border-subtle px-4 py-1.5 text-[11px] text-ink-secondary">
+          <span className="inline-flex items-center gap-1.5">
+            <Volume2 size={13} className="animate-pulse text-accent" />
+            Falando…
+          </span>
+          <button
+            type="button"
+            onClick={onStopSpeak}
+            className="font-medium text-accent-deep hover:underline"
+          >
+            Parar
+          </button>
+        </div>
+      )}
+
+      {/* Timeline de trabalho */}
+      <div className="min-h-0 flex-1 space-y-0 overflow-y-auto px-3 py-5 md:px-6">
+        {loading && <Loading label="Carregando histórico" />}
 
         {!loading && msgs.length === 0 && !sending && (
-          <div className="mx-auto max-w-lg px-2 py-10 text-center">
-            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-brand/10">
-              <Sparkles className="text-accent-deep" size={28} />
-            </div>
-            <p className="font-display text-lg font-semibold text-ink">
-              {displayName} está no posto
+          <div className="mx-auto max-w-md px-1 py-12">
+            <p className="font-display text-[1.35rem] font-semibold leading-snug tracking-tight text-ink text-balance">
+              Olá! Como posso ajudar hoje?
             </p>
-            <p className="mt-2 text-sm leading-relaxed text-ink-secondary">
-              Acompanho a clínica de forma autônoma: agenda, riscos, reativação e
-              entregas para o gestor. Ordene uma missão ou use uma rotina abaixo.
+            <p className="mt-2 text-[13px] leading-relaxed text-ink-secondary">
+              Pode conversar normalmente — resumo, agenda ou relatório só quando você pedir.
             </p>
             {emptySuggestions.length > 0 && (
-              <div className="mt-6 flex flex-wrap justify-center gap-2">
+              <div className="mt-7 flex flex-wrap gap-2">
                 {emptySuggestions.map((s, i) => (
                   <button
-                    key={s.label || i}
+                    key={s.id || s.label || i}
                     type="button"
                     disabled={sending}
                     onClick={() => onSuggestion?.(s.prompt)}
-                    className="rounded-full border border-accent/30 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent-deep transition hover:bg-accent/20 disabled:opacity-50"
+                    className={`rounded-xl border px-3 py-2 text-left transition disabled:opacity-50 ${
+                      s.accent
+                        ? 'border-warning/40 bg-warning/5 hover:bg-warning/10'
+                        : 'border-border-subtle bg-surface-2 hover:border-brand/25 hover:bg-accent-soft/50'
+                    }`}
                   >
-                    {s.label}
+                    <span className="block text-[12px] font-semibold text-ink">{s.label}</span>
+                    {s.hint && (
+                      <span className="mt-0.5 block text-[10px] text-ink-tertiary">{s.hint}</span>
+                    )}
                   </button>
                 ))}
               </div>
@@ -211,117 +334,126 @@ export default function ChatWorkspace({
           </div>
         )}
 
-        <ol className="relative mx-auto max-w-3xl space-y-0">
+        <ol className="relative mx-auto max-w-2xl space-y-0">
           {msgs.map((m, idx) => {
             const out = m.role === 'user'
             const isLast = idx === msgs.length - 1
+            const acoes = m.meta?.acoes || []
             return (
-              <li key={m.id} className="agent-msg-in relative flex gap-3 pb-6">
-                {/* rail */}
-                <div className="flex w-8 shrink-0 flex-col items-center">
-                  <div
-                    className={`flex h-8 w-8 items-center justify-center rounded-full border ${
-                      out
-                        ? 'border-accent/40 bg-accent text-white'
-                        : 'border-brand/20 bg-brand text-white'
+              <li key={m.id} className="agent-msg-in relative pb-7">
+                <div className="mb-1.5 flex items-baseline justify-between gap-3">
+                  <span
+                    className={`text-[12px] font-semibold ${
+                      out ? 'text-accent-deep' : 'text-brand'
                     }`}
                   >
-                    {out ? <User size={14} /> : <Bot size={14} />}
-                  </div>
-                  {!isLast || sending ? (
-                    <div className="mt-1 w-px flex-1 bg-border-subtle" aria-hidden />
-                  ) : null}
+                    {out ? 'Você' : displayName}
+                  </span>
+                  <time className="text-[10px] tabular-nums text-ink-tertiary">
+                    {formatTime(m.created_at)}
+                  </time>
                 </div>
 
-                <div className="min-w-0 flex-1 pt-0.5">
-                  <div className="mb-1 flex flex-wrap items-baseline gap-2">
-                    <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-tertiary">
-                      {out ? 'Sua ordem' : `Trabalho · ${displayName}`}
-                    </span>
-                    <span className="text-[10px] text-ink-tertiary">{formatTime(m.created_at)}</span>
-                  </div>
-
-                  <div
-                    className={`rounded-2xl px-4 py-3 text-sm shadow-sm ${
-                      out
-                        ? 'border border-accent/20 bg-accent/10 text-ink'
-                        : 'border border-border-subtle bg-surface-1 text-ink'
-                    }`}
-                  >
-                    <p className="whitespace-pre-wrap break-words leading-relaxed">{m.conteudo}</p>
-                    {m.meta?.anexos?.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        {m.meta.anexos.map((a, i) => (
-                          <span
-                            key={a.filename || a.localName || i}
-                            className="inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] text-ink-secondary"
-                          >
-                            <Paperclip size={10} />
-                            {a.filename || a.localName}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {m.meta?.entrega && (
-                    <div className="mt-2">
-                      <EntregaCard
-                        entrega={m.meta.entrega}
-                        compact
-                        onOpen={onOpenEntrega}
-                        onPedirAjuste={onPedirAjuste}
-                        ajusteDisabled={sending}
-                      />
+                <div
+                  className={
+                    out
+                      ? 'rounded-xl bg-surface-warm px-3.5 py-3 text-sm text-ink'
+                      : 'text-sm text-ink'
+                  }
+                >
+                  {m._streaming ? (
+                    <p className="whitespace-pre-wrap leading-relaxed">
+                      {scrubStreamingText(m.conteudo)}
+                      <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse bg-accent align-middle" aria-hidden />
+                    </p>
+                  ) : (
+                  <MessageContent
+                    text={m.conteudo}
+                    acoes={out ? [] : acoes}
+                    isUser={out}
+                    disabled={sending}
+                    onAction={prompt => onSuggestion?.(prompt)}
+                  />
+                  )}
+                  {m.meta?.anexos?.length > 0 && (
+                    <div className="mt-2.5 flex flex-wrap gap-1.5">
+                      {m.meta.anexos.map((a, i) => (
+                        <span
+                          key={a.filename || a.localName || i}
+                          className="inline-flex items-center gap-1.5 rounded-md border border-border-subtle bg-surface-2 px-2 py-1 text-[11px] text-ink-secondary"
+                        >
+                          <FileText size={11} className="text-ink-tertiary" />
+                          {a.filename || a.localName}
+                        </span>
+                      ))}
                     </div>
                   )}
                 </div>
+
+                {m.meta?.entrega && (
+                  <div className="mt-3">
+                    <EntregaCard
+                      entrega={m.meta.entrega}
+                      compact
+                      onOpen={onOpenEntrega}
+                      onPedirAjuste={onPedirAjuste}
+                      ajusteDisabled={sending}
+                    />
+                  </div>
+                )}
+
+                {!isLast && (
+                  <div className="mt-6 h-px w-full bg-border-subtle/70" aria-hidden />
+                )}
               </li>
             )
           })}
 
-          {/* Live work steps */}
-          {sending && (
-            <li className="relative flex gap-3 pb-2">
-              <div className="flex w-8 shrink-0 flex-col items-center">
-                <div className="flex h-8 w-8 items-center justify-center rounded-full border border-accent/30 bg-accent/15 text-accent-deep">
-                  <Loader2 size={14} className="animate-spin" />
-                </div>
+          {/* Placeholder só antes do primeiro token — evita bolha duplicada com o stream */}
+          {sending && !hasStreamingMsg && (
+            <li className="agent-msg-in pb-4">
+              <p className="text-[12px] font-semibold text-brand">{displayName}</p>
+              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[13px] text-ink-secondary">
+                <span className="inline-flex items-center gap-2">
+                  <Loader2 size={13} className="animate-spin text-accent" />
+                  {statusText}
+                </span>
+                <span className="tabular-nums text-[11px] text-ink-tertiary" aria-live="off">
+                  {elapsedSec}s
+                </span>
+                {typeof onCancelSend === 'function' && (
+                  <button
+                    type="button"
+                    onClick={onCancelSend}
+                    className="text-[12px] font-medium text-ink-tertiary underline-offset-2 hover:text-danger hover:underline"
+                  >
+                    Cancelar
+                  </button>
+                )}
               </div>
-              <div className="min-w-0 flex-1">
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-accent-deep">
-                  Em andamento
-                </p>
-                <ul className="space-y-2 rounded-2xl border border-accent/20 bg-accent-soft/50 px-4 py-3">
-                  {(workSteps.length
-                    ? workSteps
-                    : ['Trabalhando na sua ordem…']
-                  ).map((step, i) => {
-                    const done = i < stepTick
-                    const active = i === stepTick
-                    return (
-                      <li
-                        key={step}
-                        className={`flex items-start gap-2 text-sm ${
-                          active
-                            ? 'font-medium text-ink'
-                            : done
-                              ? 'text-ink-secondary'
-                              : 'text-ink-tertiary'
-                        }`}
-                      >
-                        {done ? (
-                          <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-success" />
-                        ) : active ? (
-                          <Loader2 size={16} className="mt-0.5 shrink-0 animate-spin text-accent" />
-                        ) : (
-                          <Circle size={16} className="mt-0.5 shrink-0 opacity-40" />
-                        )}
-                        <span>{step}</span>
-                      </li>
-                    )
-                  })}
-                </ul>
+              <p className="mt-1.5 text-[11px] text-ink-tertiary">
+                {elapsedSec < 8
+                  ? 'Lendo o CRM e preparando a resposta…'
+                  : elapsedSec < 25
+                    ? 'Primeiros tokens chegam em instantes…'
+                    : 'Ainda no modelo — cancele se quiser reformular.'}
+              </p>
+            </li>
+          )}
+          {sending && hasStreamingMsg && (
+            <li className="pb-2">
+              <div className="mx-auto flex max-w-2xl items-center gap-2 text-[11px] text-ink-tertiary">
+                <span className="tabular-nums">{elapsedSec}s</span>
+                <span>· escrevendo</span>
+                {typeof onCancelSend === 'function' && (
+                  <button
+                    type="button"
+                    onClick={onCancelSend}
+                    className="font-medium text-ink-secondary underline-offset-2 hover:text-danger hover:underline"
+                  >
+                    Cancelar
+                  </button>
+                )}
               </div>
             </li>
           )}
@@ -329,88 +461,186 @@ export default function ChatWorkspace({
         <div ref={bottomRef} />
       </div>
 
-      {/* Order composer */}
-      <footer className="border-t border-border-subtle bg-surface-1/50 p-3 md:p-4">
-        {pendingFiles.length > 0 && (
-          <div className="mb-2 flex flex-wrap gap-2">
-            {pendingFiles.map(f => (
-              <span
-                key={f.id}
-                className="inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-1 text-[11px] text-ink-secondary"
-              >
-                <Paperclip size={10} /> {f.localName || f.filename}
+      {/* Conversa com o agente — colaboração, não comando hierárquico */}
+      <footer className="shrink-0 border-t border-border-subtle bg-surface px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2.5 md:px-4 md:pb-4">
+        {inputSuggestions.length > 0 && !sending && (
+          <div className="mx-auto mb-2.5 max-w-2xl">
+            <p className="mb-1.5 px-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-ink-tertiary">
+              Sugestões
+            </p>
+            <div className="-mx-0.5 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:thin]">
+              {inputSuggestions.map((s, i) => (
                 <button
+                  key={s.id || s.label || i}
                   type="button"
-                  aria-label="Remover anexo"
-                  onClick={() => onRemoveFile?.(f)}
-                  className="rounded p-0.5 hover:bg-surface-1"
+                  disabled={sending}
+                  onClick={() => onSuggestion?.(s.prompt)}
+                  className={`shrink-0 rounded-xl border px-3 py-2 text-left transition disabled:opacity-50 ${
+                    s.accent
+                      ? 'border-warning/40 bg-warning/5 hover:bg-warning/10'
+                      : 'border-border-subtle bg-surface-2 hover:border-brand/25 hover:bg-accent-soft/50'
+                  }`}
                 >
-                  <X size={12} />
+                  <span className="block whitespace-nowrap text-[12px] font-semibold text-ink">
+                    {s.label}
+                  </span>
+                  {s.hint && (
+                    <span className="mt-0.5 block whitespace-nowrap text-[10px] text-ink-tertiary">
+                      {s.hint}
+                    </span>
+                  )}
                 </button>
-              </span>
-            ))}
+              ))}
+            </div>
           </div>
         )}
+
         <form
           onSubmit={e => {
             e.preventDefault()
+            if (!canSend) return
             onSend?.(e)
           }}
-          className="flex flex-col gap-2 sm:flex-row sm:items-end"
+          className="mx-auto max-w-2xl"
         >
-          <div className="flex flex-1 gap-2">
-            <input
-              ref={fileRef}
-              type="file"
-              className="hidden"
-              accept="image/*,.pdf,.txt,audio/*"
-              multiple
-              onChange={onPickFiles}
-            />
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              className="shrink-0"
-              onClick={() => fileRef?.current?.click()}
-              disabled={sending}
-              title="Anexar material de trabalho"
-            >
-              <Paperclip size={18} />
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              className={`shrink-0 ${listening ? 'border-accent bg-accent/15 text-accent' : ''}`}
-              onClick={onToggleMic}
-              disabled={sending}
-              title="Ordem por voz"
-            >
-              {listening ? <MicOff size={18} /> : <Mic size={18} />}
-            </Button>
+          <input
+            ref={fileRef}
+            type="file"
+            className="hidden"
+            accept="image/*,.pdf,.txt,audio/*"
+            multiple
+            onChange={onPickFiles}
+          />
+
+          {pendingFiles.length > 0 && (
+            <ul className="mb-2 flex flex-wrap gap-1.5">
+              {pendingFiles.map(f => {
+                const kind = fileKind(f)
+                return (
+                  <li
+                    key={f.id}
+                    className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-border-subtle bg-surface-2 py-1 pl-2 pr-1 text-[11px] text-ink"
+                  >
+                    {kind === 'image' ? (
+                      <ImageIcon size={12} className="shrink-0 text-accent-deep" />
+                    ) : (
+                      <FileText size={12} className="shrink-0 text-ink-tertiary" />
+                    )}
+                    <span className="truncate">{f.localName || f.filename}</span>
+                    <button
+                      type="button"
+                      aria-label="Remover anexo"
+                      onClick={() => onRemoveFile?.(f)}
+                      className="rounded-md p-1 text-ink-tertiary transition hover:bg-surface-1 hover:text-ink"
+                    >
+                      <X size={12} />
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+
+          <div
+            className={`agent-collab-desk rounded-2xl border bg-surface-2 transition-[border-color,box-shadow] ${
+              listening
+                ? 'border-accent shadow-[0_0_0_3px_var(--color-accent-muted)]'
+                : 'border-border-subtle focus-within:border-brand/30 focus-within:shadow-card'
+            }`}
+          >
+            <div className="flex items-center justify-between gap-2 px-3.5 pt-2.5">
+              <p className="font-display text-[12px] font-semibold text-ink">
+                {listening ? 'Ditado' : `Com ${displayName}`}
+              </p>
+              {listening ? (
+                <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-accent-deep">
+                  <span className="agent-listen-dot h-1.5 w-1.5 rounded-full bg-accent" />
+                  Ouvindo você…
+                </span>
+              ) : sending ? (
+                <span className="text-[11px] text-ink-tertiary">
+                  {displayName} está pensando…
+                </span>
+              ) : null}
+            </div>
+
             <textarea
+              ref={taRef}
               value={texto}
               onChange={e => setTexto?.(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Ordene o agente… (texto, anexo ou voz)"
+              placeholder={
+                listening
+                  ? 'O ditado aparece aqui…'
+                  : 'Ex.: me ajuda a ver as confirmações de amanhã e os riscos de falta'
+              }
               disabled={sending}
-              rows={2}
-              className="min-h-[48px] flex-1 resize-y rounded-xl border border-border-subtle bg-surface-2 px-3 py-2.5 text-sm text-ink placeholder:text-ink-tertiary focus:outline-none focus:ring-2 focus:ring-accent/30"
+              rows={1}
+              className="agent-order-input w-full resize-none border-0 bg-transparent px-3.5 pb-1.5 pt-1 text-[14px] leading-relaxed text-ink placeholder:text-ink-tertiary focus:outline-none focus:ring-0 disabled:opacity-60"
+              aria-label={`Mensagem para ${displayName}`}
             />
+
+            <div className="flex items-center justify-between gap-2 px-2 pb-2 pt-0.5">
+              <div className="flex items-center gap-0.5">
+                <button
+                  type="button"
+                  onClick={() => fileRef?.current?.click()}
+                  disabled={sending}
+                  className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] font-medium text-ink-secondary transition hover:bg-surface-1 hover:text-ink disabled:opacity-40"
+                >
+                  <Paperclip size={14} strokeWidth={1.75} />
+                  Anexar
+                </button>
+                <button
+                  type="button"
+                  onClick={onToggleMic}
+                  disabled={sending}
+                  aria-pressed={listening}
+                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] font-medium transition disabled:opacity-40 ${
+                    listening
+                      ? 'bg-brand text-white hover:bg-brand-soft'
+                      : 'text-ink-secondary hover:bg-surface-1 hover:text-ink'
+                  }`}
+                >
+                  <Mic size={14} strokeWidth={1.75} />
+                  {listening ? 'Parar ditado' : 'Ditado'}
+                </button>
+              </div>
+
+              {sending ? (
+                <button
+                  type="button"
+                  onClick={onCancelSend}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-border-subtle bg-surface-1 px-3.5 text-[12px] font-semibold text-ink-secondary transition hover:border-danger/30 hover:bg-danger/5 hover:text-danger"
+                >
+                  <Loader2 size={14} className="animate-spin" />
+                  Cancelar
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={!canSend}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-brand px-3.5 text-[12px] font-semibold text-white transition hover:bg-brand-soft disabled:cursor-not-allowed disabled:bg-border disabled:text-ink-tertiary"
+                >
+                  Enviar
+                  <ArrowUp size={14} strokeWidth={2.25} />
+                </button>
+              )}
+            </div>
           </div>
-          <Button
-            type="submit"
-            disabled={sending || (!texto.trim() && !pendingFiles.length)}
-            className="gap-1 sm:shrink-0"
-          >
-            {sending ? <Loader2 className="animate-spin" size={16} /> : <Send size={16} />}
-            Ordenar
-          </Button>
+
+          <p className="mt-2 px-0.5 text-[11px] text-ink-tertiary">
+            <kbd className="rounded border border-border-subtle bg-surface-2 px-1 py-px font-sans text-[10px] text-ink-secondary">
+              Enter
+            </kbd>{' '}
+            envia ·{' '}
+            <kbd className="rounded border border-border-subtle bg-surface-2 px-1 py-px font-sans text-[10px] text-ink-secondary">
+              Shift+Enter
+            </kbd>{' '}
+            nova linha
+            {voiceMode ? ' · respostas em voz alta' : null}
+          </p>
         </form>
-        <p className="mt-2 text-[10px] text-ink-tertiary">
-          O agente usa o estado da clínica (agenda, alertas, métricas) para trabalhar — não é só um chat.
-        </p>
       </footer>
     </div>
   )

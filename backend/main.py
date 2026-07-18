@@ -93,6 +93,9 @@ from models import (
     RotinaProgramadaBody,
     EstudantesChatBody,
     VisionAnalyzeBody,
+    VisionPreanalyzeBody,
+    VisionCropBody,
+    VisionEntregavelBody,
     OrcamentoCreateBody,
     OrcamentoStatusBody,
     PagamentoBody,
@@ -124,7 +127,13 @@ from hermes_agent_client import (
     estudante_session_id,
     vision_session_id,
 )
-from insights_service import clinic_briefing, QUICK_PROMPTS, agent_operational_snapshot
+from insights_service import (
+    clinic_briefing,
+    QUICK_PROMPTS,
+    agent_operational_snapshot,
+    is_casual_admin_message,
+    minimal_operational_hint,
+)
 from dashboard_service import build_cockpit
 import media_service
 from media_service import save_upload, resolve_upload, file_to_agent_parts, meta_json
@@ -539,7 +548,6 @@ def status_operacao():
         ("odonto-triagem", "Triagem de urgência"),
         ("odonto-confirmacao", "Confirmação de consulta"),
         ("odonto-recall", "Recall / retorno"),
-        ("odonto-followup", "Follow-up de orçamento"),
         ("odonto-captacao", "Captação de leads"),
         ("odonto_lembretes", "Lembretes automáticos"),
     ]
@@ -630,6 +638,37 @@ def status_operacao():
             "optional": True,
         },
     ]
+    # WhatsApp / Evolution — status operacional (arquivo escrito pelo reconnect/watchdog)
+    wa_status: dict = {
+        "ok": False,
+        "state": "unknown",
+        "has_qr": False,
+        "action": "unknown",
+        "message_pt": "Status WhatsApp indisponível",
+        "updated_at": None,
+    }
+    wa_path = Path("/root/odontogpt-wa-status.json")
+    if wa_path.is_file():
+        try:
+            wa_status = {**wa_status, **json.loads(wa_path.read_text(encoding="utf-8"))}
+        except (OSError, json.JSONDecodeError):
+            pass
+    steps.insert(
+        0,
+        {
+            "id": "whatsapp",
+            "titulo": "WhatsApp conectado",
+            "ok": bool(wa_status.get("ok")),
+            "href": "/operacao",
+            "hint": wa_status.get("message_pt")
+            or (
+                "Conectado"
+                if wa_status.get("ok")
+                else "Desconectado — escaneie o QR abaixo"
+            ),
+        },
+    )
+
     required = [s for s in steps if not s.get("optional")]
     prontos = sum(1 for s in required if s["ok"])
     return {
@@ -644,6 +683,7 @@ def status_operacao():
         "pacientes": total_pac,
         "agendamentos": total_ag,
         "lembretes_pendentes": lembretes_pend,
+        "whatsapp": wa_status,
         # nomes amigáveis para a UI
         "capacidades_ok": capacidades_ok,
         "capacidades_faltando": capacidades_faltando,
@@ -663,8 +703,39 @@ def status_operacao():
             "simulador": "/simulador",
             "conversas": "/conversas",
             "assistente": "/agente",
+            "operacao": "/operacao",
         },
     }
+
+
+@app.get("/api/operacao/whatsapp/qr", dependencies=[Depends(require_auth)])
+def operacao_whatsapp_qr():
+    """QR de reconexão WhatsApp (só autenticado). Regenera se necessário."""
+    from fastapi.responses import FileResponse
+
+    png = Path("/root/odontogpt-qr.png")
+    status_path = Path("/root/odontogpt-wa-status.json")
+    need = True
+    if status_path.is_file():
+        try:
+            st = json.loads(status_path.read_text(encoding="utf-8"))
+            if st.get("ok"):
+                raise HTTPException(status_code=404, detail="WhatsApp já conectado")
+            need = not (st.get("has_qr") and png.is_file())
+        except (OSError, json.JSONDecodeError):
+            pass
+    if need or not png.is_file():
+        import subprocess
+
+        subprocess.run(
+            ["/root/odontogpt-wa-reconnect.sh"],
+            check=False,
+            capture_output=True,
+            timeout=45,
+        )
+    if not png.is_file():
+        raise HTTPException(status_code=404, detail="QR indisponível — tente de novo em 30s")
+    return FileResponse(png, media_type="image/png", filename="odontogpt-whatsapp-qr.png")
 
 
 # ─── Métricas ───────────────────────────────────────────────────────
@@ -841,29 +912,123 @@ def get_paciente(paciente_id: int):
     paciente["agendamentos"] = agendamentos
     paciente["prontuarios"] = prontuarios
     paciente["ultimas_interacoes"] = ultimas_interacoes
+    paciente.update(_paciente_consent_fields(int(paciente_id)))
     return paciente
 
 
 @app.post("/api/pacientes", dependencies=[Depends(require_auth)])
-def criar_paciente(body: PacienteCreate):
+def criar_paciente(body: PacienteCreate, user=Depends(require_auth)):
     try:
         crm = get_crm()
         row = crm.criar_paciente(
             body.nome, body.telefone, body.data_nascimento, body.indicacao, body.observacoes
         )
+        pid = row.get("id") if isinstance(row, dict) else None
+        if pid and body.consentimento_vision:
+            import vision_consent
+
+            vision_consent.set_paciente_consent(
+                int(pid),
+                aceito=True,
+                operador_email=getattr(user, "email", None),
+            )
+            row = {**row, **_paciente_consent_fields(int(pid))}
+        elif pid:
+            row = {**row, **_paciente_consent_fields(int(pid))}
         return row
     except Exception as e:
         raise HTTPException(status_code=400, detail=crm_error_to_http(e))
 
 
 @app.patch("/api/pacientes/{paciente_id}", dependencies=[Depends(require_auth)])
-def atualizar_paciente(paciente_id: int, body: PacienteUpdate):
+def atualizar_paciente(paciente_id: int, body: PacienteUpdate, user=Depends(require_auth)):
     try:
         crm = get_crm()
         data = body.model_dump(exclude_unset=True)
-        return crm.atualizar_paciente(paciente_id, **data)
+        consent = data.pop("consentimento_vision", None)
+        row = crm.atualizar_paciente(paciente_id, **data) if data else query_one(
+            "SELECT * FROM pacientes WHERE id = ?", (paciente_id,)
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail="Paciente não encontrado")
+        if consent is not None:
+            import vision_consent
+
+            vision_consent.set_paciente_consent(
+                int(paciente_id),
+                aceito=bool(consent),
+                operador_email=getattr(user, "email", None),
+            )
+        if isinstance(row, dict):
+            row = {**row, **_paciente_consent_fields(int(paciente_id))}
+        return row
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=crm_error_to_http(e))
+
+
+def _paciente_consent_fields(paciente_id: int) -> dict:
+    import vision_consent
+
+    try:
+        info = vision_consent.get_paciente_consent(paciente_id)
+        return {
+            "consentimento_vision": info["consentimento_vision"],
+            "consentimento_vision_em": info["consentimento_vision_em"],
+            "consentimento_vision_versao": info["consentimento_vision_versao"],
+            "consentimento_vision_atual": info["termo_atual"],
+        }
+    except Exception:
+        return {
+            "consentimento_vision": False,
+            "consentimento_vision_em": None,
+            "consentimento_vision_versao": None,
+            "consentimento_vision_atual": False,
+        }
+
+
+@app.get("/api/vision/termo-consentimento", dependencies=[Depends(require_auth)])
+def vision_termo_consentimento():
+    import vision_consent
+
+    return {"data": vision_consent.term_payload()}
+
+
+@app.get(
+    "/api/pacientes/{paciente_id}/consentimento-vision",
+    dependencies=[Depends(require_auth)],
+)
+def paciente_consentimento_vision(paciente_id: int):
+    import vision_consent
+
+    try:
+        return {"data": vision_consent.get_paciente_consent(paciente_id)}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+@app.put(
+    "/api/pacientes/{paciente_id}/consentimento-vision",
+    dependencies=[Depends(require_auth)],
+)
+def put_paciente_consentimento_vision(
+    paciente_id: int,
+    aceito: bool = Query(...),
+    user=Depends(require_auth),
+):
+    import vision_consent
+
+    try:
+        return {
+            "data": vision_consent.set_paciente_consent(
+                paciente_id,
+                aceito=aceito,
+                operador_email=getattr(user, "email", None),
+            )
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
 
 
 # ─── Agendamentos ───────────────────────────────────────────────────
@@ -1570,7 +1735,10 @@ def _agent_chat_prepare(body: AgentChatBody):
     metrics_hint = None
     if body.incluir_metricas:
         try:
-            metrics_hint = agent_operational_snapshot()
+            if is_casual_admin_message(text):
+                metrics_hint = minimal_operational_hint()
+            else:
+                metrics_hint = agent_operational_snapshot()
         except Exception as ex:
             print(f"[agent_chat] snapshot fallback: {ex}")
             try:
@@ -1969,19 +2137,322 @@ def estudantes_chat(body: EstudantesChatBody):
     return {"ok": True, "resposta": answer, "session_id": sid}
 
 
+@app.post("/api/vision/preanalyze", dependencies=[Depends(require_auth)])
+def vision_preanalyze(body: VisionPreanalyzeBody):
+    """Etapa 1 — análise técnica sem LLM (contraste, nitidez, ROIs sugeridas)."""
+    import vision_cv
+
+    return vision_cv.analyze_image_cv(body.imagem_data_url)
+
+
+@app.post("/api/vision/crop", dependencies=[Depends(require_auth)])
+def vision_crop(body: VisionCropBody):
+    """Aplica crop normalizado e devolve nova data URL JPEG."""
+    import vision_cv
+
+    try:
+        out = vision_cv.crop_data_url(body.imagem_data_url, list(body.bbox))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Crop falhou: {exc}"[:200]) from exc
+    return {"ok": True, "imagem_data_url": out}
+
+
 @app.post("/api/vision/analyze", dependencies=[Depends(require_auth)])
-def vision_analyze(body: VisionAnalyzeBody):
-    op = (body.operador or "Estudante").strip() or "Estudante"
+def vision_analyze(body: VisionAnalyzeBody, user=Depends(require_auth)):
+    """OdontoVision — pipeline estruturado (validação → CV → LLM → pós).
+
+    Segurança: modo=paciente exige paciente_id + consentimento_assistivo.
+    persistir=true grava análise+imagem com retenção e audit trail.
+    """
+    import vision_service
+    import vision_store
+
+    modo = (body.modo or "estudo").strip().lower()
+    if modo not in ("estudo", "paciente"):
+        raise HTTPException(status_code=400, detail="modo inválido (estudo|paciente)")
+    if body.persistir and modo != "paciente":
+        raise HTTPException(
+            status_code=400,
+            detail="persistir exige modo=paciente com consentimento",
+        )
+    if modo == "paciente":
+        if not body.paciente_id:
+            raise HTTPException(status_code=400, detail="paciente_id obrigatório")
+        if not body.consentimento_assistivo:
+            raise HTTPException(
+                status_code=400,
+                detail="Marque o consentimento assistivo para vincular ao paciente",
+            )
+        import vision_consent
+
+        if not vision_consent.paciente_tem_consentimento_atual(int(body.paciente_id)):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Paciente sem termo Vision assinado/registrado. "
+                    "Registre o consentimento no cadastro do paciente antes de analisar."
+                ),
+            )
+
+    op = (body.operador or "Dentista").strip() or "Dentista"
     sid = vision_session_id(op)
     ctx = (body.contexto_clinico or "").strip()
-    user_note = ctx or "Análise de imagem (Odonto Vision)"
-    agent_store.append(sid, "user", user_note[:8000])
-    history = agent_store.history_for_llm(sid, max_turns=6)
-    ok, answer = ask_vision(sid, body.imagem_data_url, clinical_context=ctx, history=history[:-1] if history else None)
+    modalidade = (body.modalidade_sugerida or "").strip()
+    # Não gravar contexto clínico identificável no chat genérico quando vinculado
+    if modo == "estudo":
+        user_note = ctx or "Análise OdontoVision (estudo)"
+        if modalidade:
+            user_note = f"[{modalidade}] {user_note}"
+        agent_store.append(sid, "user", user_note[:8000])
+    else:
+        agent_store.append(
+            sid,
+            "user",
+            f"[OdontoVision paciente_id={body.paciente_id} modalidade={modalidade or 'auto'}]",
+        )
+
+    rois = None
+    if body.rois:
+        rois = []
+        for r in body.rois[:8]:
+            if isinstance(r, (list, tuple)) and len(r) == 4:
+                try:
+                    rois.append([float(r[0]), float(r[1]), float(r[2]), float(r[3])])
+                except (TypeError, ValueError):
+                    continue
+
+    # Contexto enviado ao modelo: sem nome/telefone — só texto clínico + id interno se paciente
+    ctx_llm = ctx
+    if modo == "paciente" and body.paciente_id:
+        ctx_llm = (f"[paciente_ref={body.paciente_id}] " + ctx).strip()
+
+    result = vision_service.run_pipeline(
+        body.imagem_data_url,
+        contexto=ctx_llm,
+        modalidade_sugerida=modalidade,
+        operador=op,
+        history=None,
+        rois=rois,
+        cv_preanalise=body.cv_preanalise if isinstance(body.cv_preanalise, dict) else None,
+    )
+    if not result.get("ok"):
+        if result.get("estruturado"):
+            agent_store.append(
+                sid, "assistant", result.get("analise") or result.get("erro") or "falha"
+            )
+            return {
+                "ok": False,
+                "erro": result.get("erro"),
+                "analise": result.get("analise") or result.get("erro"),
+                "estruturado": result.get("estruturado"),
+                "disclaimer": result.get("disclaimer") or vision_service.DISCLAIMER,
+                "pipeline": result.get("pipeline") or [],
+                "session_id": sid,
+                "tech": result.get("tech"),
+                "cv": result.get("cv"),
+                "rois": result.get("rois") or rois or [],
+                "analise_salva": None,
+            }
+        raise HTTPException(status_code=502, detail=result.get("erro") or "falha na análise")
+
+    agent_store.append(sid, "assistant", (result.get("analise") or "")[:12000])
+
+    analise_salva = None
+    # Persistir: modo paciente + (persistir flag OU default true quando paciente)
+    should_persist = modo == "paciente" and (
+        body.persistir or body.consentimento_assistivo
+    )
+    if should_persist:
+        try:
+            estruturado = result.get("estruturado") or {}
+            analise_salva = vision_store.create_analise(
+                modo="paciente",
+                paciente_id=int(body.paciente_id),
+                consentimento_assistivo=True,
+                operador_user_id=getattr(user, "id", None),
+                operador_email=getattr(user, "email", None),
+                operador_nome=op,
+                modalidade=estruturado.get("modalidade") or modalidade or None,
+                resumo=estruturado.get("resumo"),
+                analise_md=result.get("analise"),
+                estruturado=estruturado if isinstance(estruturado, dict) else None,
+                disclaimer=result.get("disclaimer") or vision_service.DISCLAIMER,
+                imagem_data_url=body.imagem_data_url,
+                persist_image=True,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)[:240]) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500, detail=f"Falha ao persistir análise: {exc}"[:240]
+            ) from exc
+    elif modo == "estudo":
+        # Registro efêmero sem imagem (auditoria de uso, sem PHI de imagem)
+        try:
+            estruturado = result.get("estruturado") or {}
+            analise_salva = vision_store.create_analise(
+                modo="estudo",
+                paciente_id=None,
+                consentimento_assistivo=False,
+                operador_user_id=getattr(user, "id", None),
+                operador_email=getattr(user, "email", None),
+                operador_nome=op,
+                modalidade=estruturado.get("modalidade") or modalidade or None,
+                resumo=estruturado.get("resumo"),
+                analise_md=None,  # estudo: não guardar markdown clínico longo
+                estruturado={"modalidade": estruturado.get("modalidade")}
+                if isinstance(estruturado, dict)
+                else None,
+                disclaimer=result.get("disclaimer") or vision_service.DISCLAIMER,
+                imagem_data_url=None,
+                persist_image=False,
+            )
+        except Exception:
+            analise_salva = None
+
+    return {
+        "ok": True,
+        "analise": result.get("analise"),
+        "estruturado": result.get("estruturado"),
+        "disclaimer": result.get("disclaimer") or vision_service.DISCLAIMER,
+        "pipeline": result.get("pipeline") or [],
+        "session_id": sid,
+        "tech": result.get("tech"),
+        "cv": result.get("cv"),
+        "rois": result.get("rois") or rois or [],
+        "analise_salva": analise_salva,
+        "modo": modo,
+        "paciente_id": body.paciente_id if modo == "paciente" else None,
+    }
+
+
+@app.get("/api/vision/analises", dependencies=[Depends(require_auth)])
+def vision_list_analises(
+    paciente_id: int = Query(..., ge=1),
+    limit: int = Query(30, ge=1, le=100),
+    user=Depends(require_auth),
+):
+    import vision_store
+
+    try:
+        data = vision_store.list_by_paciente(
+            paciente_id,
+            operador_user_id=getattr(user, "id", None),
+            operador_email=getattr(user, "email", None),
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)[:200]) from exc
+    return {"data": data}
+
+
+@app.get("/api/vision/analises/{public_id}", dependencies=[Depends(require_auth)])
+def vision_get_analise(public_id: str, user=Depends(require_auth)):
+    import vision_store
+
+    item = vision_store.get_analise(
+        public_id,
+        operador_user_id=getattr(user, "id", None),
+        operador_email=getattr(user, "email", None),
+    )
+    if not item:
+        raise HTTPException(status_code=404, detail="análise não encontrada")
+    return {"data": item}
+
+
+@app.get("/api/vision/analises/{public_id}/imagem", dependencies=[Depends(require_auth)])
+def vision_get_imagem(public_id: str, user=Depends(require_auth)):
+    import vision_store
+    from fastapi.responses import FileResponse
+
+    try:
+        path, mime = vision_store.open_image(
+            public_id,
+            operador_user_id=getattr(user, "id", None),
+            operador_email=getattr(user, "email", None),
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="imagem não encontrada")
+    return FileResponse(
+        path,
+        media_type=mime,
+        filename=f"vision-{public_id[:8]}.bin",
+        headers={
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@app.delete("/api/vision/analises/{public_id}", dependencies=[Depends(require_auth)])
+def vision_delete_analise(public_id: str, user=Depends(require_auth)):
+    import vision_store
+
+    ok = vision_store.soft_delete(
+        public_id,
+        operador_user_id=getattr(user, "id", None),
+        operador_email=getattr(user, "email", None),
+        reason="user",
+    )
     if not ok:
-        raise HTTPException(502, answer)
-    agent_store.append(sid, "assistant", answer)
-    return {"ok": True, "analise": answer, "session_id": sid, "disclaimer": "Análise assistiva educacional — não substitui laudo profissional."}
+        raise HTTPException(status_code=404, detail="análise não encontrada")
+    return {"ok": True}
+
+
+@app.post("/api/vision/entregavel", dependencies=[Depends(require_auth)])
+def vision_entregavel(body: VisionEntregavelBody, user=Depends(require_auth)):
+    """Gera parecer descritivo (tipo laudo) na biblioteca + pronto para PDF."""
+    import vision_cv
+    import vision_store
+
+    estruturado = body.estruturado or {}
+    if not isinstance(estruturado, dict):
+        raise HTTPException(status_code=400, detail="estruturado inválido")
+    brand = brand_store.get_brand() or {}
+    clinica_cfg = {}
+    try:
+        clinica_cfg = clinic_config.get_clinica() or {}
+    except Exception:
+        clinica_cfg = {}
+    clinica = (
+        clinica_cfg.get("nome")
+        or brand.get("nome_clinica")
+        or brand.get("nome")
+        or "Clínica"
+    )
+    corpo = vision_cv.build_laudo_markdown(estruturado, clinica=str(clinica)[:120])
+    modalidade = str(estruturado.get("modalidade") or "exame").replace("_", " ")
+    titulo = (body.titulo or "").strip() or f"Parecer descritivo — {modalidade}"
+    op = (body.operador or "Dentista").strip() or "Dentista"
+    meta = {
+        "fonte": "odontovision",
+        "modalidade": estruturado.get("modalidade"),
+        "qualidade_tecnica": estruturado.get("qualidade_tecnica"),
+    }
+    if body.analise_public_id:
+        meta["vision_public_id"] = body.analise_public_id
+    if body.paciente_id:
+        meta["paciente_id"] = body.paciente_id
+    try:
+        item = entregaveis_store.create_entregavel(
+            tipo="laudo",
+            titulo=titulo[:200],
+            corpo_md=corpo,
+            operador=op,
+            origem="odontovision",
+            meta=meta,
+            status="pronto",
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Falha ao salvar entregável: {exc}"[:240]) from exc
+    if body.analise_public_id and item.get("id"):
+        vision_store.link_entregavel(
+            body.analise_public_id,
+            int(item["id"]),
+            operador_user_id=getattr(user, "id", None),
+            operador_email=getattr(user, "email", None),
+        )
+    return {"ok": True, "entregavel": item}
 
 # ─── V2: Slots / confirmação agenda ─────────────────────────────────
 

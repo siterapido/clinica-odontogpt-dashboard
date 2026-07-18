@@ -1,7 +1,93 @@
 """Insights operacionais para o painel do assistente OdontoGPT."""
 from __future__ import annotations
 
+import re
+
 from database import query, query_one
+
+# Saudações e papo leve — não injetar snapshot completo do CRM.
+_CASUAL_RE = re.compile(
+    r"^(?:"
+    r"oi|olá|ola|hey|e\s*aí|e\s*ai|bom\s*dia|boa\s*tarde|boa\s*noite|"
+    r"tudo\s*bem|tudo\s*bom|obrigad\w*|valeu|vlw|ok+|blz|beleza|show|legal|"
+    r"entendi|perfeito|combinado|até\s*mais|ate\s*mais|tchau|falou|"
+    r"como\s*vai|tudo\s*certo|e\s*aí\??|opa"
+    r")[\s!.?…]*$",
+    re.I,
+)
+
+_OPERATIONAL_KEYWORDS = (
+    "relatório",
+    "relatorio",
+    "briefing",
+    "resumo",
+    "agenda",
+    "lembrete",
+    "confirmação",
+    "confirmacao",
+    "confirmar",
+    "no-show",
+    "noshow",
+    "paciente",
+    "consulta",
+    "reativação",
+    "reativacao",
+    "lista de espera",
+    "orçamento",
+    "orcamento",
+    "tarefa",
+    "crm",
+    "métrica",
+    "metrica",
+    "entregável",
+    "entregavel",
+    "pauta",
+    "apresentação",
+    "apresentacao",
+    "rotina",
+    "fila",
+    "hoje",
+    "amanhã",
+    "amanha",
+    "semana",
+    "falta",
+    "analise",
+    "analisar",
+    "anex",
+    "próxim",
+    "proxim",
+    "insight",
+    "executivo",
+)
+
+
+def is_casual_admin_message(text: str) -> bool:
+    """True quando a mensagem é saudação ou papo leve — evita textão com snapshot."""
+    t = (text or "").strip()
+    if not t:
+        return True
+    low = t.lower()
+    if any(kw in low for kw in _OPERATIONAL_KEYWORDS):
+        return False
+    if _CASUAL_RE.match(t):
+        return True
+    if len(t) <= 28 and "?" not in t:
+        return True
+    return False
+
+
+def minimal_operational_hint() -> str:
+    """Contexto mínimo para conversa casual — agente não despeja CRM na resposta."""
+    b = clinic_briefing()
+    hoje = int(b.get("agendamentos_hoje") or 0)
+    falhos = int(b.get("lembretes_falhos") or 0)
+    parts = [f"[Contexto mínimo — use só se o gestor perguntar; não liste na resposta] {hoje} consulta(s) hoje."]
+    if falhos:
+        parts.append(f"{falhos} lembrete(s) com falha.")
+    alertas = b.get("alertas") or []
+    if alertas:
+        parts.append(f"Alerta: {alertas[0].get('titulo')}.")
+    return " ".join(parts)
 
 # Janela 7 dias BRT (SQLite: now UTC-3).
 _WIN_DATA_7D = "data >= date('now', '-3 hours', '-7 days') AND data <= date('now', '-3 hours')"
@@ -268,6 +354,155 @@ def clinic_briefing() -> dict:
         "anti_noshow": anti,
         "alertas": alertas,
     }
+
+
+def _mask_phone(phone: str | None) -> str:
+    """Mascara telefone para o agente (gestor vê CRM; evita PII crua no LLM)."""
+    digits = "".join(ch for ch in str(phone or "") if ch.isdigit())
+    if len(digits) < 4:
+        return "(sem telefone)"
+    return f"***{digits[-4:]}"
+
+
+def agent_operational_snapshot(max_chars: int = 5500) -> str:
+    """Snapshot acionável do CRM para o chat do agente (texto, sem telefone completo).
+
+    Resolve o gargalo: contagens sozinhas forçam o modelo a dizer
+    "não tenho os nomes" mesmo com dados no banco.
+    """
+    lines: list[str] = []
+    b = clinic_briefing()
+    anti = b.get("anti_noshow") or {}
+
+    lines.append("## Snapshot operacional (CRM — use estes dados; não invente)")
+    lines.append(
+        f"- Agenda hoje: {b.get('agendamentos_hoje', 0)} "
+        f"(confirmados/agendados: {b.get('confirmados_hoje', 0)})"
+    )
+    lines.append(
+        f"- Lembretes pendentes: {b.get('lembretes_pendentes', 0)} · "
+        f"falhos: {b.get('lembretes_falhos', 0)}"
+    )
+    lines.append(
+        f"- Inativos 120d: {b.get('pacientes_sem_retorno_120d', 0)} · "
+        f"novos 7d: {b.get('novos_pacientes_7d', 0)} · "
+        f"conversas 48h: {b.get('conversas_recentes_48h', 0)}"
+    )
+    lines.append(
+        f"- Financeiro: faturamento mês R$ {float(b.get('faturamento_mes') or 0):.2f} · "
+        f"a receber R$ {float(b.get('a_receber') or 0):.2f} · "
+        f"atrasado R$ {float(b.get('atrasado_valor') or 0):.2f}"
+    )
+    lines.append(
+        f"- Anti-no-show 7d: conf {anti.get('taxa_confirmacao_pct', 0)}% · "
+        f"no-show {anti.get('taxa_no_show_pct', 0)}% · "
+        f"lista espera ativos {anti.get('lista_espera_ativos', 0)}"
+    )
+
+    alertas = b.get("alertas") or []
+    if alertas:
+        lines.append("### Alertas")
+        for a in alertas[:6]:
+            lines.append(f"- [{a.get('nivel', 'info')}] {a.get('titulo')}: {a.get('detalhe')}")
+
+    proximos = b.get("proximos_hoje") or []
+    if proximos:
+        lines.append("### Consultas de hoje")
+        for a in proximos[:10]:
+            lines.append(
+                f"- {a.get('horario') or '?'} · {a.get('paciente_nome') or 'Paciente'} · "
+                f"{a.get('procedimento') or '—'} · status={a.get('status') or '?'}"
+            )
+    else:
+        lines.append("### Consultas de hoje\n- (nenhuma)")
+
+    # Próximos 7 dias (além de hoje)
+    try:
+        agenda_prox = query(
+            """SELECT a.data, a.horario, a.procedimento, a.status, a.dentista,
+                      p.nome as paciente_nome
+               FROM agendamentos a
+               LEFT JOIN pacientes p ON a.paciente_id = p.id
+               WHERE a.data > date('now', '-3 hours')
+                 AND a.data <= date('now', '-3 hours', '+7 days')
+                 AND a.status NOT IN ('cancelado')
+               ORDER BY a.data ASC, a.horario ASC LIMIT 12"""
+        )
+        if agenda_prox:
+            lines.append("### Agenda próximos 7 dias")
+            for a in agenda_prox:
+                lines.append(
+                    f"- {a.get('data')} {a.get('horario') or ''} · "
+                    f"{a.get('paciente_nome') or 'Paciente'} · "
+                    f"{a.get('procedimento') or '—'} · "
+                    f"Dr(a). {a.get('dentista') or '?'} · {a.get('status')}"
+                )
+    except Exception:
+        pass
+
+    # Lembretes pendentes com detalhe (sem telefone completo)
+    try:
+        lembs = query(
+            """SELECT l.id, l.tipo, l.data_envio, l.status, l.mensagem,
+                      p.nome as paciente_nome, p.telefone, p.whatsapp
+               FROM lembretes l
+               LEFT JOIN pacientes p ON l.paciente_id = p.id
+               WHERE l.status IN ('pendente', 'falhou')
+               ORDER BY
+                 CASE l.status WHEN 'falhou' THEN 0 ELSE 1 END,
+                 l.data_envio ASC
+               LIMIT 12"""
+        )
+        if lembs:
+            lines.append("### Lembretes abertos (pendente/falhou)")
+            for l in lembs:
+                phone = _mask_phone(l.get("whatsapp") or l.get("telefone"))
+                msg = (l.get("mensagem") or "").replace("\n", " ").strip()[:80]
+                lines.append(
+                    f"- #{l.get('id')} · {l.get('paciente_nome') or 'Paciente'} · "
+                    f"tipo={l.get('tipo')} · envio={l.get('data_envio')} · "
+                    f"status={l.get('status')} · tel={phone}"
+                    + (f" · msg: {msg}" if msg else "")
+                )
+        else:
+            lines.append("### Lembretes abertos\n- (nenhum pendente/falho)")
+    except Exception:
+        lines.append("### Lembretes abertos\n- (indisponível)")
+
+    # Lista de espera (colunas reais: procedimento, periodo_preferido)
+    try:
+        espera = query(
+            """SELECT le.id, le.prioridade, le.status, le.procedimento,
+                      le.periodo_preferido, p.nome as paciente_nome
+               FROM lista_espera le
+               LEFT JOIN pacientes p ON le.paciente_id = p.id
+               WHERE le.status IN ('ativo', 'ofertado')
+               ORDER BY le.prioridade DESC, le.id ASC LIMIT 8"""
+        )
+        if espera:
+            lines.append("### Lista de espera")
+            for e in espera:
+                lines.append(
+                    f"- {e.get('paciente_nome') or 'Paciente'} · "
+                    f"{e.get('procedimento') or '—'} · "
+                    f"periodo={e.get('periodo_preferido') or '—'} · "
+                    f"prio={e.get('prioridade')} · {e.get('status')}"
+                )
+    except Exception:
+        pass
+
+    retornos = b.get("retornos_atrasados") or []
+    if retornos:
+        lines.append("### Retornos atrasados (amostra)")
+        for r in retornos[:6]:
+            lines.append(
+                f"- {r.get('nome') or 'Paciente'} · última={r.get('ultima_consulta')}"
+            )
+
+    text = "\n".join(lines)
+    if len(text) > max_chars:
+        text = text[: max_chars - 20] + "\n…(truncado)"
+    return text
 
 
 QUICK_PROMPTS = [
